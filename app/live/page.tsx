@@ -1,11 +1,16 @@
 "use client"
 
 import { useEffect, useMemo, useState, useCallback } from "react"
+import dynamic from "next/dynamic"
 import { motion, AnimatePresence } from "framer-motion"
 import { Camera, Radio, Play, ChevronLeft, ChevronRight, MessageSquare, X } from "lucide-react"
 import { useSimulation } from "@/hooks/use-simulation"
 import { BroadcastBar } from "@/components/live/broadcast-bar"
-import { MapStage } from "@/components/live/map-stage"
+
+const MapStage = dynamic(
+  () => import("@/components/live/map-stage").then((m) => m.MapStage),
+  { ssr: false, loading: () => <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">Loading 3D world...</div> }
+)
 import { AgentRail } from "@/components/live/agent-rail"
 import { CouncilChamber } from "@/components/live/council-chamber"
 import { NewsModules } from "@/components/live/news-modules"
