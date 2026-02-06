@@ -12,19 +12,17 @@ interface MapStageProps {
   cameraMode: CameraMode
 }
 
-// Tile size in pixels (satellite style needs larger tiles for detail)
+// Tile size -- larger for detail
 const CELL = 48
 
-// ── Simplex-style noise (procedural terrain) ──
-// Deterministic hash for infinite terrain generation
+// ===== NOISE =====
 function hash2d(x: number, y: number): number {
   let h = (x * 374761393 + y * 668265263 + 1013904223) | 0
   h = (h ^ (h >> 13)) * 1274126177
-  h = (h ^ (h >> 16))
-  return (h >>> 0) / 4294967296 // 0..1
+  h = h ^ (h >> 16)
+  return (h >>> 0) / 4294967296
 }
 
-// Smooth noise with interpolation for natural terrain
 function smoothNoise(x: number, y: number, scale: number): number {
   const sx = x / scale
   const sy = y / scale
@@ -32,7 +30,6 @@ function smoothNoise(x: number, y: number, scale: number): number {
   const iy = Math.floor(sy)
   const fx = sx - ix
   const fy = sy - iy
-  // Smoothstep
   const ux = fx * fx * (3 - 2 * fx)
   const uy = fy * fy * (3 - 2 * fy)
   const a = hash2d(ix, iy)
@@ -42,588 +39,246 @@ function smoothNoise(x: number, y: number, scale: number): number {
   return a * (1 - ux) * (1 - uy) + b * ux * (1 - uy) + c * (1 - ux) * uy + d * ux * uy
 }
 
-// Fractal noise (octaves) for more natural terrain
-function fbm(x: number, y: number, octaves: number = 4): number {
+function fbm(x: number, y: number, octaves = 4): number {
   let val = 0
   let amp = 0.5
-  let scale = 30
+  let scl = 30
   for (let i = 0; i < octaves; i++) {
-    val += smoothNoise(x, y, scale) * amp
+    val += smoothNoise(x, y, scl) * amp
     amp *= 0.5
-    scale *= 0.5
+    scl *= 0.5
   }
   return val
 }
 
-// Generate biome for procedural world tile
-function getProceduralBiome(wx: number, wy: number): { biome: MapTile["biome"]; hasTree: boolean; treeVariant: number } {
+// High-resolution per-pixel noise (for sub-tile texture)
+function pixelNoise(px: number, py: number): number {
+  return hash2d(Math.floor(px * 3.7), Math.floor(py * 3.7))
+}
+
+function fineNoise(px: number, py: number, scale: number): number {
+  return smoothNoise(px, py, scale)
+}
+
+// ===== BIOME GENERATION =====
+type Biome = MapTile["biome"]
+
+interface ProceduralTile {
+  biome: Biome
+  elevation: number
+  moisture: number
+  detail: number
+}
+
+function getProceduralTile(wx: number, wy: number): ProceduralTile {
   const elevation = fbm(wx + 500, wy + 500, 5)
   const moisture = fbm(wx + 2000, wy + 3000, 4)
   const detail = hash2d(wx * 7 + 13, wy * 11 + 7)
+  let biome: Biome = "plains"
+  if (elevation < 0.30) biome = "water"
+  else if (elevation < 0.36) biome = "desert"
+  else if (elevation > 0.72) biome = "mountain"
+  else if (elevation > 0.62) biome = moisture > 0.45 ? "forest" : "plains"
+  else if (moisture > 0.55) biome = "forest"
+  else if (moisture < 0.3) biome = "desert"
+  else biome = "plains"
+  return { biome, elevation, moisture, detail }
+}
 
-  let biome: MapTile["biome"] = "plains"
-  let hasTree = false
-  let treeVariant = 0
+// Resolve biome for any world coordinate (village or procedural)
+function getBiomeAt(wx: number, wy: number, map: MapTile[][]): Biome {
+  if (wx >= 0 && wx < 60 && wy >= 0 && wy < 60) {
+    return map[wy]?.[wx]?.biome ?? "plains"
+  }
+  return getProceduralTile(wx, wy).biome
+}
 
-  if (elevation < 0.30) {
-    biome = "water"
-  } else if (elevation < 0.36) {
-    // Beach/shoreline - sandy
-    biome = "desert"
-  } else if (elevation > 0.72) {
-    biome = "mountain"
-  } else if (elevation > 0.62) {
-    // High elevation sparse
-    biome = moisture > 0.45 ? "forest" : "plains"
-    hasTree = moisture > 0.5 && detail > 0.4
-  } else {
-    // Mid-range
-    if (moisture > 0.55) {
-      biome = "forest"
-      hasTree = detail > 0.2
-    } else if (moisture < 0.3) {
-      biome = "desert"
-    } else {
-      biome = "plains"
-      hasTree = detail > 0.82
+// ===== BIOME COLOR PALETTES (per-pixel sampling) =====
+// Returns [r, g, b] for a given biome at sub-pixel precision
+function biomeColor(biome: Biome, worldPx: number, worldPy: number, elevation: number): [number, number, number] {
+  const n1 = fineNoise(worldPx, worldPy, 18)
+  const n2 = fineNoise(worldPx + 100, worldPy + 200, 7)
+  const n3 = pixelNoise(worldPx, worldPy)
+
+  switch (biome) {
+    case "plains": {
+      // Natural grassland: varied greens with brown patches
+      const baseG = 95 + n1 * 45 + n2 * 25
+      const baseR = 55 + n1 * 25 + n3 * 12
+      const baseB = 30 + n1 * 10
+      // Occasional darker grass patches
+      const patch = fineNoise(worldPx, worldPy, 30)
+      if (patch > 0.65) {
+        return [baseR - 10, baseG + 15, baseB - 5]
+      }
+      // Occasional dry/brown spots
+      if (n2 < 0.15) {
+        return [baseR + 30, baseG - 15, baseB + 10]
+      }
+      return [baseR, baseG, baseB]
+    }
+    case "forest": {
+      // Dense canopy from above: dark greens with depth variation
+      const canopy = fineNoise(worldPx, worldPy, 12)
+      const deep = fineNoise(worldPx + 50, worldPy + 50, 5)
+      const r = 20 + canopy * 20 + deep * 8
+      const g = 50 + canopy * 40 + deep * 20
+      const b = 15 + canopy * 10 + deep * 5
+      // Canopy highlights (sun-lit tops)
+      if (deep > 0.7) {
+        return [r + 10, g + 25, b + 5]
+      }
+      // Dark gaps between canopy
+      if (deep < 0.2) {
+        return [r - 8, g - 15, b - 5]
+      }
+      return [r, g, b]
+    }
+    case "water": {
+      // Realistic water with depth + subtle color variation
+      const depth = fineNoise(worldPx, worldPy, 25)
+      const ripple = fineNoise(worldPx * 2, worldPy * 2, 4)
+      const r = 15 + depth * 25 + ripple * 8
+      const g = 45 + depth * 40 + ripple * 15
+      const b = 80 + depth * 55 + ripple * 20
+      // Specular highlights
+      if (ripple > 0.78) {
+        return [r + 20, g + 30, b + 35]
+      }
+      return [r, g, b]
+    }
+    case "mountain": {
+      // Rocky terrain with snow
+      const rock = fineNoise(worldPx, worldPy, 10)
+      const crag = fineNoise(worldPx * 1.5, worldPy * 1.5, 4)
+      const baseGrey = 85 + rock * 50 + crag * 25
+      // Snow on high elevation
+      if (elevation > 0.78 && crag > 0.4) {
+        const snow = 200 + crag * 40
+        return [snow, snow + 2, snow + 5]
+      }
+      // Exposed rock faces (darker)
+      if (crag < 0.25) {
+        return [baseGrey - 15, baseGrey - 18, baseGrey - 20]
+      }
+      return [baseGrey - 5, baseGrey, baseGrey - 10]
+    }
+    case "desert": {
+      // Sandy desert with dune shadows
+      const sand = fineNoise(worldPx, worldPy, 15)
+      const dune = fineNoise(worldPx * 0.8, worldPy * 0.8, 30)
+      const r = 185 + sand * 40 + dune * 15
+      const g = 160 + sand * 30 + dune * 12
+      const b = 100 + sand * 20 + dune * 8
+      // Dune shadow
+      if (dune < 0.3) {
+        return [r - 25, g - 22, b - 15]
+      }
+      // Bright crest
+      if (dune > 0.75) {
+        return [r + 10, g + 8, b + 5]
+      }
+      return [r, g, b]
+    }
+    default:
+      return [80, 120, 50]
+  }
+}
+
+// ===== BIOME BLENDING (smooth transitions) =====
+function blendedBiomeColor(
+  wx: number, wy: number,
+  subX: number, subY: number,
+  map: MapTile[][],
+): [number, number, number] {
+  const centerBiome = getBiomeAt(wx, wy, map)
+  const elevation = (wx >= 0 && wx < 60 && wy >= 0 && wy < 60)
+    ? 0.5
+    : getProceduralTile(wx, wy).elevation
+
+  const worldPx = wx * CELL + subX
+  const worldPy = wy * CELL + subY
+
+  // Check if we're near an edge (blend zone)
+  const blendMargin = CELL * 0.35
+  const nearLeft = subX < blendMargin
+  const nearRight = subX > CELL - blendMargin
+  const nearTop = subY < blendMargin
+  const nearBottom = subY > CELL - blendMargin
+
+  if (!nearLeft && !nearRight && !nearTop && !nearBottom) {
+    // Center of tile - no blending needed
+    return biomeColor(centerBiome, worldPx, worldPy, elevation)
+  }
+
+  // Gather neighbor biomes and blend weights
+  const base = biomeColor(centerBiome, worldPx, worldPy, elevation)
+  let totalWeight = 1.0
+  let r = base[0]
+  let g = base[1]
+  let b = base[2]
+
+  const blendNeighbor = (nx: number, ny: number, distNorm: number) => {
+    const nBiome = getBiomeAt(nx, ny, map)
+    if (nBiome === centerBiome) return
+    const nElev = (nx >= 0 && nx < 60 && ny >= 0 && ny < 60) ? 0.5 : getProceduralTile(nx, ny).elevation
+    const nColor = biomeColor(nBiome, worldPx, worldPy, nElev)
+    // Smooth weight based on distance from edge
+    const w = (1 - distNorm) * 0.55
+    r += nColor[0] * w
+    g += nColor[1] * w
+    b += nColor[2] * w
+    totalWeight += w
+  }
+
+  if (nearLeft) blendNeighbor(wx - 1, wy, subX / blendMargin)
+  if (nearRight) blendNeighbor(wx + 1, wy, (CELL - subX) / blendMargin)
+  if (nearTop) blendNeighbor(wx, wy - 1, subY / blendMargin)
+  if (nearBottom) blendNeighbor(wx, wy + 1, (CELL - subY) / blendMargin)
+  // Diagonal blending for corners
+  if (nearLeft && nearTop) blendNeighbor(wx - 1, wy - 1, Math.max(subX, subY) / blendMargin * 0.7)
+  if (nearRight && nearTop) blendNeighbor(wx + 1, wy - 1, Math.max(CELL - subX, subY) / blendMargin * 0.7)
+  if (nearLeft && nearBottom) blendNeighbor(wx - 1, wy + 1, Math.max(subX, CELL - subY) / blendMargin * 0.7)
+  if (nearRight && nearBottom) blendNeighbor(wx + 1, wy + 1, Math.max(CELL - subX, CELL - subY) / blendMargin * 0.7)
+
+  return [r / totalWeight, g / totalWeight, b / totalWeight]
+}
+
+// ===== OFFSCREEN TILE CACHE =====
+// Pre-render each tile as a small ImageData to avoid per-pixel work every frame
+const tileCache = new Map<string, ImageBitmap>()
+const CACHE_MAX = 4000
+
+function getTileCacheKey(wx: number, wy: number, phase: Phase): string {
+  return `${wx},${wy},${phase}`
+}
+
+async function renderTileBitmap(
+  wx: number, wy: number,
+  map: MapTile[][],
+  phase: Phase,
+): Promise<ImageBitmap> {
+  const offscreen = new OffscreenCanvas(CELL, CELL)
+  const ctx = offscreen.getContext("2d")!
+  const imgData = ctx.createImageData(CELL, CELL)
+  const data = imgData.data
+
+  for (let py = 0; py < CELL; py++) {
+    for (let px = 0; px < CELL; px++) {
+      const [r, g, b] = blendedBiomeColor(wx, wy, px, py, map)
+      const idx = (py * CELL + px) * 4
+      data[idx] = Math.max(0, Math.min(255, r))
+      data[idx + 1] = Math.max(0, Math.min(255, g))
+      data[idx + 2] = Math.max(0, Math.min(255, b))
+      data[idx + 3] = 255
     }
   }
-
-  treeVariant = Math.floor(detail * 6)
-  return { biome, hasTree, treeVariant }
+  ctx.putImageData(imgData, 0, 0)
+  return createImageBitmap(offscreen)
 }
 
-// ── COLOR PALETTES (satellite-realistic) ──
+// ===== SATELLITE BUILDING RENDERERS =====
 
-const PHASE_TINT: Record<Phase, { r: number; g: number; b: number; a: number }> = {
-  morning: { r: 255, g: 220, b: 160, a: 0.06 },
-  day: { r: 0, g: 0, b: 0, a: 0 },
-  evening: { r: 120, g: 70, b: 160, a: 0.12 },
-  night: { r: 10, g: 15, b: 45, a: 0.35 },
-}
-
-// ── SATELLITE-STYLE DRAWING FUNCTIONS ──
-
-// Ground: realistic aerial view with texture variation
-function drawSatGround(ctx: CanvasRenderingContext2D, biome: string, px: number, py: number, wx: number, wy: number) {
-  const h = hash2d(wx, wy)
-  const h2 = hash2d(wx + 100, wy + 100)
-
-  if (biome === "water") {
-    // Deep ocean/lake - satellite water with color depth variation
-    const depth = smoothNoise(wx, wy, 8)
-    const r = 20 + depth * 30
-    const g = 60 + depth * 50
-    const b = 100 + depth * 60
-    ctx.fillStyle = `rgb(${r},${g},${b})`
-    ctx.fillRect(px, py, CELL, CELL)
-    // Specular highlights
-    if (h > 0.7) {
-      ctx.fillStyle = `rgba(140, 190, 220, ${0.08 + h2 * 0.06})`
-      ctx.beginPath()
-      ctx.ellipse(px + h * CELL, py + h2 * CELL, 8 + h * 6, 3, h * 3, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    // Wave pattern
-    ctx.strokeStyle = `rgba(80, 140, 180, 0.06)`
-    ctx.lineWidth = 0.8
-    for (let i = 0; i < 3; i++) {
-      const oy = py + 10 + i * 14
-      ctx.beginPath()
-      ctx.moveTo(px, oy + Math.sin(wx * 0.5 + i) * 3)
-      ctx.quadraticCurveTo(px + CELL / 2, oy + Math.sin(wx * 0.5 + i + 1) * 4, px + CELL, oy + Math.sin(wx * 0.5 + i + 2) * 3)
-      ctx.stroke()
-    }
-    return
-  }
-
-  if (biome === "plains") {
-    // Green fields - satellite view of grassland
-    const g1 = 110 + h * 40 + smoothNoise(wx, wy, 5) * 30
-    const r1 = 60 + h * 20
-    const b1 = 30 + h * 15
-    ctx.fillStyle = `rgb(${r1},${g1},${b1})`
-    ctx.fillRect(px, py, CELL, CELL)
-    // Field texture patches (like agricultural fields from above)
-    if (h > 0.5) {
-      ctx.fillStyle = `rgba(${65 + h2 * 20},${120 + h2 * 30},${30 + h2 * 10}, 0.3)`
-      ctx.fillRect(px + h * 10, py + h2 * 12, CELL * 0.5, CELL * 0.4)
-    }
-    // Grass texture dots
-    ctx.fillStyle = `rgba(80, 140, 50, 0.15)`
-    for (let i = 0; i < 4; i++) {
-      const dx = ((hash2d(wx * 3 + i, wy * 5) * CELL) | 0)
-      const dy = ((hash2d(wx * 7 + i, wy * 3) * CELL) | 0)
-      ctx.beginPath()
-      ctx.arc(px + dx, py + dy, 1 + h2, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    return
-  }
-
-  if (biome === "forest") {
-    // Dense forest canopy from above - dark greens
-    const g1 = 70 + h * 30 + smoothNoise(wx, wy, 4) * 20
-    const r1 = 25 + h * 15
-    const b1 = 20 + h * 10
-    ctx.fillStyle = `rgb(${r1},${g1},${b1})`
-    ctx.fillRect(px, py, CELL, CELL)
-    // Forest floor darkness
-    ctx.fillStyle = `rgba(15, 40, 15, ${0.15 + h * 0.1})`
-    ctx.fillRect(px, py, CELL, CELL)
-    return
-  }
-
-  if (biome === "mountain") {
-    // Rocky mountain terrain from above
-    const elevation = smoothNoise(wx, wy, 6)
-    const grey = 100 + elevation * 80 + h * 30
-    ctx.fillStyle = `rgb(${grey - 5},${grey},${grey - 10})`
-    ctx.fillRect(px, py, CELL, CELL)
-    // Rocky texture
-    ctx.fillStyle = `rgba(${80 + h * 40}, ${75 + h * 35}, ${70 + h * 30}, 0.3)`
-    for (let i = 0; i < 3; i++) {
-      const rx = px + hash2d(wx * 2 + i, wy) * CELL
-      const ry = py + hash2d(wx, wy * 2 + i) * CELL
-      ctx.beginPath()
-      ctx.ellipse(rx, ry, 4 + h * 5, 3 + h2 * 4, h * Math.PI, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    // Snow on peaks
-    if (elevation > 0.6) {
-      ctx.fillStyle = `rgba(220, 225, 230, ${0.2 + elevation * 0.3})`
-      ctx.beginPath()
-      ctx.ellipse(px + CELL * 0.4, py + CELL * 0.4, 10 + h * 6, 8 + h2 * 5, h * 2, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    return
-  }
-
-  if (biome === "desert") {
-    // Sandy desert from above
-    const r1 = 190 + h * 35
-    const g1 = 165 + h * 30
-    const b1 = 105 + h * 25
-    ctx.fillStyle = `rgb(${r1},${g1},${b1})`
-    ctx.fillRect(px, py, CELL, CELL)
-    // Dune shadow lines
-    ctx.strokeStyle = `rgba(160, 130, 80, 0.12)`
-    ctx.lineWidth = 1.5
-    for (let i = 0; i < 2; i++) {
-      const dy = py + 12 + i * 20
-      ctx.beginPath()
-      ctx.moveTo(px, dy)
-      ctx.quadraticCurveTo(px + CELL * 0.5, dy + (h - 0.5) * 8, px + CELL, dy + 2)
-      ctx.stroke()
-    }
-  }
-}
-
-// Tree canopy from above (satellite view - just a round dark-green blob with shadow)
-function drawSatTree(ctx: CanvasRenderingContext2D, px: number, py: number, wx: number, wy: number, variant: number) {
-  const h = hash2d(wx, wy)
-  const cx = px + CELL * (0.3 + h * 0.4)
-  const cy = py + CELL * (0.3 + hash2d(wx + 1, wy) * 0.4)
-  const radius = 7 + variant * 1.5 + h * 5
-
-  // Tree shadow (offset to southeast)
-  ctx.fillStyle = "rgba(0, 0, 0, 0.2)"
-  ctx.beginPath()
-  ctx.arc(cx + 3, cy + 3, radius, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Main canopy - dark green circle
-  const greenBase = 45 + variant * 8
-  const greenVar = 25 + h * 30
-  ctx.fillStyle = `rgb(${greenBase - 10}, ${greenBase + greenVar + 20}, ${greenBase - 15})`
-  ctx.beginPath()
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Canopy texture - lighter patches on top (sun-lit side)
-  ctx.fillStyle = `rgba(${60 + variant * 5}, ${100 + h * 60}, ${30 + variant * 5}, 0.35)`
-  ctx.beginPath()
-  ctx.arc(cx - radius * 0.2, cy - radius * 0.2, radius * 0.6, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Dark center shadow (canopy depth)
-  ctx.fillStyle = `rgba(15, 30, 10, 0.15)`
-  ctx.beginPath()
-  ctx.arc(cx + 1, cy + 1, radius * 0.4, 0, Math.PI * 2)
-  ctx.fill()
-}
-
-// Path/Road from above (satellite-style: grey asphalt or dirt)
-function drawSatPath(ctx: CanvasRenderingContext2D, px: number, py: number, map: MapTile[][], wx: number, wy: number, isVillage: boolean) {
-  const pathColor = isVillage ? "rgba(140, 130, 115, 0.7)" : "rgba(120, 110, 95, 0.5)"
-  const pathW = isVillage ? CELL * 0.45 : CELL * 0.3
-  const edgeColor = isVillage ? "rgba(110, 100, 85, 0.3)" : "rgba(100, 90, 75, 0.2)"
-
-  const hasN = wy > 0 && map[wy - 1]?.[wx]?.hasPath
-  const hasS = map[wy + 1]?.[wx]?.hasPath
-  const hasE = map[wy]?.[wx + 1]?.hasPath
-  const hasW2 = wx > 0 && map[wy]?.[wx - 1]?.hasPath
-
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-  const half = pathW / 2
-
-  // Draw connected road segments
-  ctx.fillStyle = pathColor
-  // Center
-  ctx.fillRect(cx - half, cy - half, pathW, pathW)
-  if (hasN) ctx.fillRect(cx - half, py, pathW, CELL / 2)
-  if (hasS) ctx.fillRect(cx - half, cy, pathW, CELL / 2)
-  if (hasE) ctx.fillRect(cx, cy - half, CELL / 2, pathW)
-  if (hasW2) ctx.fillRect(px, cy - half, CELL / 2, pathW)
-
-  // Road edge lines
-  ctx.fillStyle = edgeColor
-  const lineW = 1
-  if (hasN || hasS) {
-    ctx.fillRect(cx - half - lineW, py, lineW, CELL)
-    ctx.fillRect(cx + half, py, lineW, CELL)
-  }
-  if (hasE || hasW2) {
-    ctx.fillRect(px, cy - half - lineW, CELL, lineW)
-    ctx.fillRect(px, cy + half, CELL, lineW)
-  }
-}
-
-// ── SATELLITE BUILDING RENDERERS (top-down rooftop views) ──
-
-function drawSatHouse(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
-  const h = hash2d(px, py)
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-
-  // Building shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.25)"
-  roundRect(ctx, cx - 12 + 4, cy - 10 + 4, 24, 20, 1)
-  ctx.fill()
-
-  // Roof (top-down view) - main rectangle
-  const roofColors = ["#8b5e3c", "#7a4f32", "#996b47", "#a0714e"]
-  ctx.fillStyle = roofColors[Math.floor(h * 4)]
-  roundRect(ctx, cx - 12, cy - 10, 24, 20, 1)
-  ctx.fill()
-
-  // Roof ridge line (center)
-  ctx.strokeStyle = "rgba(60, 35, 15, 0.3)"
-  ctx.lineWidth = 1.5
-  ctx.beginPath()
-  ctx.moveTo(cx - 11, cy)
-  ctx.lineTo(cx + 11, cy)
-  ctx.stroke()
-
-  // Roof shingle texture lines
-  ctx.strokeStyle = "rgba(50, 30, 10, 0.12)"
-  ctx.lineWidth = 0.5
-  for (let i = -3; i <= 3; i++) {
-    ctx.beginPath()
-    ctx.moveTo(cx - 11, cy + i * 3)
-    ctx.lineTo(cx + 11, cy + i * 3)
-    ctx.stroke()
-  }
-
-  // Chimney (small dark rectangle on roof)
-  ctx.fillStyle = "#5a5550"
-  ctx.fillRect(cx + 5, cy - 8, 4, 4)
-  ctx.fillStyle = "rgba(40, 40, 40, 0.3)"
-  ctx.fillRect(cx + 6, cy - 7, 2, 2)
-
-  // Window glow from skylights at night
-  if (wg > 0.3) {
-    ctx.fillStyle = `rgba(255, 230, 140, ${wg * 0.25})`
-    ctx.fillRect(cx - 6, cy - 5, 3, 3)
-    ctx.fillRect(cx - 6, cy + 3, 3, 3)
-  }
-}
-
-function drawSatFarm(ctx: CanvasRenderingContext2D, px: number, py: number) {
-  // Agricultural field from above - crop rows
-  const h = hash2d(px + 300, py + 300)
-  const colors = [
-    { r: 140, g: 160, b: 50 },
-    { r: 120, g: 145, b: 45 },
-    { r: 160, g: 170, b: 60 },
-  ]
-  const c = colors[Math.floor(h * 3)]
-
-  // Base field
-  ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`
-  ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4)
-
-  // Crop rows (visible from satellite)
-  ctx.strokeStyle = `rgba(${c.r - 30},${c.g - 20},${c.b - 15}, 0.4)`
-  ctx.lineWidth = 1
-  const rows = 8 + Math.floor(h * 4)
-  for (let i = 0; i < rows; i++) {
-    const ry = py + 4 + (i * (CELL - 8)) / rows
-    ctx.beginPath()
-    ctx.moveTo(px + 3, ry)
-    ctx.lineTo(px + CELL - 3, ry)
-    ctx.stroke()
-  }
-
-  // Slight fence boundary
-  ctx.strokeStyle = "rgba(100, 80, 50, 0.25)"
-  ctx.lineWidth = 0.8
-  ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4)
-}
-
-function drawSatCouncil(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-
-  // Larger building shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.3)"
-  roundRect(ctx, cx - 16 + 5, cy - 14 + 5, 32, 28, 2)
-  ctx.fill()
-
-  // Roof - larger, grander
-  ctx.fillStyle = "#6a6560"
-  roundRect(ctx, cx - 16, cy - 14, 32, 28, 2)
-  ctx.fill()
-
-  // Pediment triangle on roof
-  ctx.fillStyle = "#7a7570"
-  ctx.beginPath()
-  ctx.moveTo(cx, cy - 14)
-  ctx.lineTo(cx - 14, cy - 4)
-  ctx.lineTo(cx + 14, cy - 4)
-  ctx.closePath()
-  ctx.fill()
-
-  // Roof detail lines
-  ctx.strokeStyle = "rgba(50, 45, 40, 0.15)"
-  ctx.lineWidth = 0.5
-  for (let i = 0; i < 5; i++) {
-    ctx.beginPath()
-    ctx.moveTo(cx - 15, cy - 12 + i * 7)
-    ctx.lineTo(cx + 15, cy - 12 + i * 7)
-    ctx.stroke()
-  }
-
-  // Courtyard/entrance (lighter area at south)
-  ctx.fillStyle = "rgba(160, 150, 135, 0.4)"
-  ctx.fillRect(cx - 5, cy + 10, 10, 5)
-
-  // Night glow
-  if (wg > 0.3) {
-    ctx.fillStyle = `rgba(255, 220, 130, ${wg * 0.15})`
-    ctx.beginPath()
-    ctx.arc(cx, cy, 8, 0, Math.PI * 2)
-    ctx.fill()
-  }
-}
-
-function drawSatWatchtower(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-
-  // Shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.3)"
-  ctx.beginPath()
-  ctx.arc(cx + 3, cy + 3, 8, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Tower base (circular from above)
-  ctx.fillStyle = "#7a7570"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 8, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Top platform (lighter ring)
-  ctx.fillStyle = "#8a8580"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 6, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Battlements (small squares around the circle)
-  ctx.fillStyle = "#6a6560"
-  for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 3) {
-    const bx = cx + Math.cos(angle) * 7.5
-    const by = cy + Math.sin(angle) * 7.5
-    ctx.fillRect(bx - 1.5, by - 1.5, 3, 3)
-  }
-
-  // Torch glow
-  ctx.fillStyle = `rgba(255, 160, 40, ${0.2 + wg * 0.2})`
-  ctx.beginPath()
-  ctx.arc(cx, cy, 3, 0, Math.PI * 2)
-  ctx.fill()
-}
-
-function drawSatStorehouse(ctx: CanvasRenderingContext2D, px: number, py: number) {
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-
-  // Shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.22)"
-  roundRect(ctx, cx - 14 + 4, cy - 10 + 4, 28, 20, 1)
-  ctx.fill()
-
-  // Barn roof (darker than house)
-  ctx.fillStyle = "#6b3e22"
-  roundRect(ctx, cx - 14, cy - 10, 28, 20, 1)
-  ctx.fill()
-
-  // Ridge
-  ctx.strokeStyle = "rgba(40, 20, 10, 0.3)"
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(cx, cy - 9)
-  ctx.lineTo(cx, cy + 9)
-  ctx.stroke()
-
-  // Plank lines across
-  ctx.strokeStyle = "rgba(40, 20, 10, 0.1)"
-  ctx.lineWidth = 0.5
-  for (let i = -4; i <= 4; i++) {
-    ctx.beginPath()
-    ctx.moveTo(cx - 13, cy + i * 2.2)
-    ctx.lineTo(cx + 13, cy + i * 2.2)
-    ctx.stroke()
-  }
-}
-
-function drawSatWell(ctx: CanvasRenderingContext2D, px: number, py: number) {
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-
-  // Shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.2)"
-  ctx.beginPath()
-  ctx.arc(cx + 2, cy + 2, 7, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Stone ring
-  ctx.fillStyle = "#8a8580"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 7, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Water inside
-  ctx.fillStyle = "#3a7abb"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 4.5, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Highlight
-  ctx.fillStyle = "rgba(120, 180, 220, 0.4)"
-  ctx.beginPath()
-  ctx.arc(cx - 1.5, cy - 1.5, 2, 0, Math.PI * 2)
-  ctx.fill()
-}
-
-function drawSatWall(ctx: CanvasRenderingContext2D, px: number, py: number) {
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-
-  // Shadow
-  ctx.fillStyle = "rgba(0, 0, 0, 0.18)"
-  ctx.fillRect(px + 6 + 3, cy - 3 + 3, CELL - 12, 8)
-
-  // Wall top-down (thick line)
-  ctx.fillStyle = "#7a7570"
-  ctx.fillRect(px + 4, cy - 4, CELL - 8, 8)
-
-  // Stone texture
-  ctx.strokeStyle = "rgba(50, 45, 40, 0.15)"
-  ctx.lineWidth = 0.5
-  for (let i = 0; i < 4; i++) {
-    const sx = px + 6 + i * 10
-    ctx.beginPath()
-    ctx.moveTo(sx, cy - 3)
-    ctx.lineTo(sx, cy + 3)
-    ctx.stroke()
-  }
-
-  // Battlement dots
-  ctx.fillStyle = "#8a8580"
-  for (let i = 0; i < 3; i++) {
-    ctx.fillRect(px + 8 + i * 13, cy - 5, 4, 2)
-  }
-}
-
-// ── AGENT RENDERING (satellite/aerial view: small icons with indicators) ──
-
-const AGENT_COLORS = [
-  "#26c6da", "#66bb6a", "#ef5350", "#ffa726", "#ab47bc",
-  "#42a5f5", "#ec407a", "#8d6e63", "#78909c", "#ffca28",
-]
-
-function drawSatAgent(
-  ctx: CanvasRenderingContext2D,
-  px: number,
-  py: number,
-  agent: Agent,
-  index: number,
-  tick: number,
-) {
-  const cx = px + CELL / 2
-  const cy = py + CELL / 2
-  const color = AGENT_COLORS[index % AGENT_COLORS.length]
-  const pulse = 0.8 + Math.sin(tick * 0.06 + index * 1.2) * 0.2
-
-  // Glow ring
-  ctx.fillStyle = color + "25"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 10 * pulse, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Outer ring
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.arc(cx, cy, 6, 0, Math.PI * 2)
-  ctx.stroke()
-
-  // Inner fill
-  ctx.fillStyle = color + "cc"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 4.5, 0, Math.PI * 2)
-  ctx.fill()
-
-  // White center dot
-  ctx.fillStyle = "#fff"
-  ctx.beginPath()
-  ctx.arc(cx, cy, 1.5, 0, Math.PI * 2)
-  ctx.fill()
-
-  // Name label above
-  const name = agent.name.length > 6 ? agent.name.slice(0, 6) : agent.name
-  ctx.font = "bold 8px var(--font-geist-sans), system-ui, sans-serif"
-  ctx.textAlign = "center"
-  ctx.textBaseline = "bottom"
-  const textW = ctx.measureText(name).width
-  // Background pill
-  ctx.fillStyle = "rgba(0,0,0,0.65)"
-  roundRect(ctx, cx - textW / 2 - 3, cy - 16, textW + 6, 11, 3)
-  ctx.fill()
-  // Text
-  ctx.fillStyle = "#fff"
-  ctx.fillText(name, cx, cy - 7)
-
-  // Status micro-dot
-  const statusColor =
-    agent.status === "working" ? "#4caf50" :
-    agent.status === "sleeping" ? "#78909c" :
-    agent.status === "in_council" ? "#26c6da" :
-    agent.status === "on_watch" ? "#ffa726" :
-    agent.status === "exploring" ? "#ab47bc" : "#9e9e9e"
-  ctx.fillStyle = "#000"
-  ctx.beginPath()
-  ctx.arc(cx + 6, cy + 5, 3.5, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.fillStyle = statusColor
-  ctx.beginPath()
-  ctx.arc(cx + 6, cy + 5, 2.5, 0, Math.PI * 2)
-  ctx.fill()
-}
-
-// ── Helper ──
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath()
   ctx.moveTo(x + r, y)
@@ -638,22 +293,360 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath()
 }
 
-// Building dispatchers
-type BWG = (ctx: CanvasRenderingContext2D, x: number, y: number, glow: number) => void
-const GLOW_BUILDINGS: Record<string, BWG> = {
-  house: drawSatHouse,
-  council: drawSatCouncil,
-  watchtower: drawSatWatchtower,
-}
-type BSimple = (ctx: CanvasRenderingContext2D, x: number, y: number) => void
-const SIMPLE_BUILDINGS: Record<string, BSimple> = {
-  farm: drawSatFarm,
-  storehouse: drawSatStorehouse,
-  well: drawSatWell,
-  wall: drawSatWall,
+function drawHouse(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number, wx: number, wy: number) {
+  const h = hash2d(wx * 31 + 7, wy * 17 + 3)
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 22 + h * 6
+  const hh = 18 + h * 5
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.22)"
+  roundRect(ctx, cx - w / 2 + 4, cy - hh / 2 + 4, w, hh, 1.5)
+  ctx.fill()
+
+  // Roof surface
+  const roofHue = 15 + h * 15
+  const roofSat = 40 + h * 20
+  ctx.fillStyle = `hsl(${roofHue}, ${roofSat}%, ${28 + h * 12}%)`
+  roundRect(ctx, cx - w / 2, cy - hh / 2, w, hh, 1.5)
+  ctx.fill()
+
+  // Ridge line
+  ctx.strokeStyle = `hsla(${roofHue}, ${roofSat}%, 20%, 0.35)`
+  ctx.lineWidth = 1.2
+  ctx.beginPath()
+  ctx.moveTo(cx - w / 2 + 2, cy)
+  ctx.lineTo(cx + w / 2 - 2, cy)
+  ctx.stroke()
+
+  // Shingle lines
+  ctx.strokeStyle = `hsla(${roofHue}, ${roofSat}%, 18%, 0.08)`
+  ctx.lineWidth = 0.6
+  for (let i = -3; i <= 3; i++) {
+    ctx.beginPath()
+    ctx.moveTo(cx - w / 2 + 1, cy + i * (hh / 7))
+    ctx.lineTo(cx + w / 2 - 1, cy + i * (hh / 7))
+    ctx.stroke()
+  }
+
+  // Chimney
+  const chimX = cx + w / 2 - 6
+  const chimY = cy - hh / 2 + 1
+  ctx.fillStyle = "#555"
+  ctx.fillRect(chimX, chimY, 4, 5)
+  ctx.fillStyle = "#444"
+  ctx.fillRect(chimX + 0.5, chimY + 0.5, 3, 1.5)
+
+  // Night window glow
+  if (wg > 0.2) {
+    ctx.fillStyle = `rgba(255,220,120,${wg * 0.2})`
+    ctx.fillRect(cx - 5, cy - 4, 3, 3)
+    ctx.fillRect(cx + 2, cy - 4, 3, 3)
+    ctx.fillRect(cx - 5, cy + 2, 3, 3)
+  }
 }
 
-// ── Metric pill ──
+function drawFarm(ctx: CanvasRenderingContext2D, px: number, py: number, wx: number, wy: number) {
+  const h = hash2d(wx * 13 + 5, wy * 19 + 11)
+  const inset = 3
+  const fw = CELL - inset * 2
+  const fh = CELL - inset * 2
+
+  // Crop field base
+  const cropG = 120 + h * 50
+  ctx.fillStyle = `rgb(${80 + h * 30}, ${cropG}, ${35 + h * 15})`
+  ctx.fillRect(px + inset, py + inset, fw, fh)
+
+  // Crop rows (realistic from above)
+  const rows = 10 + Math.floor(h * 5)
+  const rowSpacing = fh / rows
+  for (let i = 0; i < rows; i++) {
+    const ry = py + inset + i * rowSpacing
+    const lineNoise = hash2d(wx * 7 + i, wy * 3)
+    ctx.strokeStyle = `rgba(${60 + lineNoise * 30}, ${cropG - 25 + lineNoise * 10}, ${25 + lineNoise * 10}, 0.35)`
+    ctx.lineWidth = rowSpacing * 0.4
+    ctx.beginPath()
+    ctx.moveTo(px + inset + 1, ry + rowSpacing * 0.5)
+    ctx.lineTo(px + inset + fw - 1, ry + rowSpacing * 0.5)
+    ctx.stroke()
+  }
+
+  // Thin border
+  ctx.strokeStyle = "rgba(80,60,30,0.2)"
+  ctx.lineWidth = 0.7
+  ctx.strokeRect(px + inset, py + inset, fw, fh)
+}
+
+function drawCouncil(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 34
+  const h = 28
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.28)"
+  roundRect(ctx, cx - w / 2 + 5, cy - h / 2 + 5, w, h, 2)
+  ctx.fill()
+
+  // Main roof
+  ctx.fillStyle = "#5a5855"
+  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 2)
+  ctx.fill()
+
+  // Columns (lighter dots along front)
+  ctx.fillStyle = "#8a8580"
+  for (let i = 0; i < 5; i++) {
+    const colX = cx - w / 2 + 4 + i * (w - 8) / 4
+    ctx.beginPath()
+    ctx.arc(colX, cy + h / 2 - 3, 1.5, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  // Pediment accent
+  ctx.fillStyle = "#6a6660"
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - h / 2 + 1)
+  ctx.lineTo(cx - 12, cy - 3)
+  ctx.lineTo(cx + 12, cy - 3)
+  ctx.closePath()
+  ctx.fill()
+
+  // Courtyard
+  ctx.fillStyle = "rgba(150,140,125,0.3)"
+  roundRect(ctx, cx - 4, cy + h / 2 - 1, 8, 4, 1)
+  ctx.fill()
+
+  if (wg > 0.2) {
+    ctx.fillStyle = `rgba(255,210,100,${wg * 0.12})`
+    ctx.beginPath()
+    ctx.arc(cx, cy, 10, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+function drawWatchtower(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+
+  // Shadow
+  ctx.fillStyle = "rgba(0,0,0,0.25)"
+  ctx.beginPath()
+  ctx.arc(cx + 3, cy + 3, 9, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Stone base
+  ctx.fillStyle = "#706b66"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 9, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Top platform
+  ctx.fillStyle = "#807b76"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 6.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Crenellations
+  ctx.fillStyle = "#605b56"
+  for (let a = 0; a < Math.PI * 2; a += Math.PI / 3) {
+    ctx.fillRect(cx + Math.cos(a) * 8 - 1.5, cy + Math.sin(a) * 8 - 1.5, 3, 3)
+  }
+
+  // Torch
+  ctx.fillStyle = `rgba(255,160,40,${0.25 + wg * 0.3})`
+  ctx.beginPath()
+  ctx.arc(cx, cy, 3, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+function drawStorehouse(ctx: CanvasRenderingContext2D, px: number, py: number, wx: number, wy: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 28
+  const h = 20
+
+  ctx.fillStyle = "rgba(0,0,0,0.2)"
+  roundRect(ctx, cx - w / 2 + 4, cy - h / 2 + 4, w, h, 1)
+  ctx.fill()
+
+  ctx.fillStyle = "#5a3518"
+  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 1)
+  ctx.fill()
+
+  // Ridge
+  ctx.strokeStyle = "rgba(30,15,5,0.35)"
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - h / 2 + 1)
+  ctx.lineTo(cx, cy + h / 2 - 1)
+  ctx.stroke()
+
+  // Plank lines
+  ctx.strokeStyle = "rgba(30,15,5,0.08)"
+  ctx.lineWidth = 0.4
+  for (let i = -4; i <= 4; i++) {
+    ctx.beginPath()
+    ctx.moveTo(cx - w / 2 + 1, cy + i * 2.3)
+    ctx.lineTo(cx + w / 2 - 1, cy + i * 2.3)
+    ctx.stroke()
+  }
+}
+
+function drawWell(ctx: CanvasRenderingContext2D, px: number, py: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+
+  ctx.fillStyle = "rgba(0,0,0,0.18)"
+  ctx.beginPath()
+  ctx.arc(cx + 2, cy + 2, 7.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = "#8a8580"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 7.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = "#3578aa"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 4.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  ctx.fillStyle = "rgba(100,170,210,0.4)"
+  ctx.beginPath()
+  ctx.arc(cx - 1.5, cy - 1.5, 2, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+function drawWall(ctx: CanvasRenderingContext2D, px: number, py: number, wx: number, wy: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+
+  ctx.fillStyle = "rgba(0,0,0,0.15)"
+  ctx.fillRect(px + 4 + 3, cy - 4 + 3, CELL - 8, 8)
+
+  ctx.fillStyle = "#706b66"
+  ctx.fillRect(px + 4, cy - 4, CELL - 8, 8)
+
+  // Stone texture
+  ctx.strokeStyle = "rgba(40,35,30,0.12)"
+  ctx.lineWidth = 0.5
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath()
+    ctx.moveTo(px + 6 + i * 10, cy - 3)
+    ctx.lineTo(px + 6 + i * 10, cy + 3)
+    ctx.stroke()
+  }
+}
+
+// ===== PATH DRAWING (road from above) =====
+function drawPath(ctx: CanvasRenderingContext2D, px: number, py: number, map: MapTile[][], vx: number, vy: number) {
+  const pathW = CELL * 0.35
+  const half = pathW / 2
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+
+  const hasN = vy > 0 && map[vy - 1]?.[vx]?.hasPath
+  const hasS = map[vy + 1]?.[vx]?.hasPath
+  const hasE = map[vy]?.[vx + 1]?.hasPath
+  const hasW = vx > 0 && map[vy]?.[vx - 1]?.hasPath
+
+  // Dirt road base
+  ctx.fillStyle = "rgba(130,115,90,0.6)"
+  ctx.fillRect(cx - half, cy - half, pathW, pathW)
+  if (hasN) ctx.fillRect(cx - half, py, pathW, CELL / 2)
+  if (hasS) ctx.fillRect(cx - half, cy, pathW, CELL / 2)
+  if (hasE) ctx.fillRect(cx, cy - half, CELL / 2, pathW)
+  if (hasW) ctx.fillRect(px, cy - half, CELL / 2, pathW)
+
+  // Subtle edge
+  ctx.fillStyle = "rgba(100,85,60,0.2)"
+  const ew = 1
+  if (hasN || hasS) {
+    ctx.fillRect(cx - half - ew, py, ew, CELL)
+    ctx.fillRect(cx + half, py, ew, CELL)
+  }
+  if (hasE || hasW) {
+    ctx.fillRect(px, cy - half - ew, CELL, ew)
+    ctx.fillRect(px, cy + half, CELL, ew)
+  }
+}
+
+// ===== AGENTS =====
+const AGENT_COLORS = [
+  "#26c6da", "#66bb6a", "#ef5350", "#ffa726", "#ab47bc",
+  "#42a5f5", "#ec407a", "#8d6e63", "#78909c", "#ffca28",
+]
+
+function drawAgent(ctx: CanvasRenderingContext2D, px: number, py: number, agent: Agent, index: number, tick: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const color = AGENT_COLORS[index % AGENT_COLORS.length]
+  const pulse = 0.85 + Math.sin(tick * 0.05 + index * 1.2) * 0.15
+
+  // Glow
+  ctx.fillStyle = color + "20"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 11 * pulse, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Ring
+  ctx.strokeStyle = color
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.arc(cx, cy, 6, 0, Math.PI * 2)
+  ctx.stroke()
+
+  // Fill
+  ctx.fillStyle = color + "cc"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 4.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Center
+  ctx.fillStyle = "#fff"
+  ctx.beginPath()
+  ctx.arc(cx, cy, 1.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Name
+  const name = agent.name.length > 7 ? agent.name.slice(0, 7) : agent.name
+  ctx.font = "bold 8px system-ui, sans-serif"
+  ctx.textAlign = "center"
+  ctx.textBaseline = "bottom"
+  const tw = ctx.measureText(name).width
+  ctx.fillStyle = "rgba(0,0,0,0.65)"
+  roundRect(ctx, cx - tw / 2 - 3, cy - 17, tw + 6, 12, 3)
+  ctx.fill()
+  ctx.fillStyle = "#fff"
+  ctx.fillText(name, cx, cy - 7)
+
+  // Status dot
+  const sc =
+    agent.status === "working" ? "#4caf50" :
+    agent.status === "sleeping" ? "#78909c" :
+    agent.status === "in_council" ? "#26c6da" :
+    agent.status === "on_watch" ? "#ffa726" :
+    agent.status === "exploring" ? "#ab47bc" : "#9e9e9e"
+  ctx.fillStyle = "#000"
+  ctx.beginPath()
+  ctx.arc(cx + 6, cy + 5, 3.5, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = sc
+  ctx.beginPath()
+  ctx.arc(cx + 6, cy + 5, 2.5, 0, Math.PI * 2)
+  ctx.fill()
+}
+
+// ===== PHASE TINT =====
+const PHASE_TINT: Record<Phase, { r: number; g: number; b: number; a: number }> = {
+  morning: { r: 255, g: 220, b: 160, a: 0.05 },
+  day: { r: 0, g: 0, b: 0, a: 0 },
+  evening: { r: 100, g: 60, b: 140, a: 0.1 },
+  night: { r: 8, g: 12, b: 40, a: 0.3 },
+}
+
+// ===== METRIC PILL =====
 function MetricPill({ label, value, suffix = "", direction }: { label: string; value: number; suffix?: string; direction?: "up" | "down" | null }) {
   return (
     <div className="flex items-center gap-1.5 rounded-md bg-background/70 backdrop-blur-md border border-border/50 px-2 py-1">
@@ -672,21 +665,14 @@ function MetricPill({ label, value, suffix = "", direction }: { label: string; v
   )
 }
 
-// ── MAIN COMPONENT ──
-// The village map is placed at the center of an infinite procedural world.
-// The camera offset determines which world-coordinates are visible.
-// Tiles outside the 60x60 village are procedurally generated.
-
-const MAP_SIZE = 60 // Village map size
-const VILLAGE_OFFSET_X = 0 // Village world origin
-const VILLAGE_OFFSET_Y = 0
+// ===== MAIN COMPONENT =====
+const MAP_SIZE = 60
 
 export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerSize, setContainerSize] = useState({ w: 960, h: 640 })
   const [zoom, setZoom] = useState(1)
-  // Camera position = world tile at center of viewport
   const [camera, setCamera] = useState({ x: 30, y: 30 })
   const [hoveredTile, setHoveredTile] = useState<{ x: number; y: number } | null>(null)
   const isDragging = useRef(false)
@@ -694,10 +680,13 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
   const animTick = useRef(0)
   const rafRef = useRef<number>(0)
 
+  // Pre-rendered tile bitmaps
+  const tileBitmapCache = useRef(new Map<string, ImageBitmap | "pending">())
+
   const windowGlow = phase === "night" ? 1.0 : phase === "evening" ? 0.8 : phase === "morning" ? 0.3 : 0.1
   const tint = PHASE_TINT[phase]
 
-  // Resize canvas to fill container
+  // Resize observer
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -711,7 +700,7 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     return () => observer.disconnect()
   }, [])
 
-  // Build agent position map for village tiles
+  // Agent positions
   const agentPositions = useMemo(() => {
     const positions = new Map<string, { agent: Agent; index: number }>()
     for (let i = 0; i < agents.length; i++) {
@@ -721,14 +710,18 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     return positions
   }, [agents])
 
-  // ── RENDER LOOP ──
+  // Clear cache when phase changes (lighting changes ground colors)
+  useEffect(() => {
+    tileBitmapCache.current.clear()
+  }, [phase])
+
+  // ===== RENDER =====
   const render = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
-    // Canvas dimensions = container (hi-dpi)
     const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1
     const cw = containerSize.w
     const ch = containerSize.h
@@ -742,122 +735,118 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     animTick.current++
     const tick = animTick.current
 
-    const cellZoomed = CELL * zoom
-
-    // How many tiles fit on screen
-    const tilesW = Math.ceil(cw / cellZoomed) + 2
-    const tilesH = Math.ceil(ch / cellZoomed) + 2
-
-    // World tile at top-left of viewport
+    const cellZ = CELL * zoom
+    const tilesW = Math.ceil(cw / cellZ) + 2
+    const tilesH = Math.ceil(ch / cellZ) + 2
     const startWX = camera.x - Math.floor(tilesW / 2)
     const startWY = camera.y - Math.floor(tilesH / 2)
-
-    // Pixel offset for smooth sub-tile scrolling
     const offsetPx = {
-      x: (cw / 2) - (camera.x - startWX) * cellZoomed,
-      y: (ch / 2) - (camera.y - startWY) * cellZoomed,
+      x: cw / 2 - (camera.x - startWX) * cellZ,
+      y: ch / 2 - (camera.y - startWY) * cellZ,
     }
 
-    // ── Pass 1: Ground + paths ──
+    const cache = tileBitmapCache.current
+
+    // ── Ground pass: use cached bitmaps or draw fallback ──
     for (let dy = 0; dy < tilesH; dy++) {
       const wy = startWY + dy
       for (let dx = 0; dx < tilesW; dx++) {
         const wx = startWX + dx
-        const px = offsetPx.x + dx * cellZoomed
-        const py = offsetPx.y + dy * cellZoomed
+        const px = offsetPx.x + dx * cellZ
+        const py = offsetPx.y + dy * cellZ
+        if (px + cellZ < 0 || py + cellZ < 0 || px > cw || py > ch) continue
 
-        // Skip if entirely off-screen
-        if (px + cellZoomed < 0 || py + cellZoomed < 0 || px > cw || py > ch) continue
+        const key = getTileCacheKey(wx, wy, phase)
+        const cached = cache.get(key)
 
-        ctx.save()
-        ctx.translate(px, py)
-        ctx.scale(zoom, zoom)
-
-        // Is this tile in the village?
-        const vilX = wx - VILLAGE_OFFSET_X
-        const vilY = wy - VILLAGE_OFFSET_Y
-        const inVillage = vilX >= 0 && vilX < MAP_SIZE && vilY >= 0 && vilY < MAP_SIZE
-
-        if (inVillage) {
-          const tile = map[vilY]?.[vilX]
-          if (tile) {
-            drawSatGround(ctx, tile.biome, 0, 0, wx, wy)
-            // Forest trees
-            if (tile.biome === "forest" && !tile.building) {
-              drawSatTree(ctx, 0, 0, wx, wy, Math.floor(hash2d(wx, wy) * 6))
-            }
-            // Paths
-            if (tile.hasPath) {
-              drawSatPath(ctx, 0, 0, map, vilX, vilY, true)
-            }
-          }
+        if (cached && cached !== "pending") {
+          // Draw cached hi-res tile
+          ctx.drawImage(cached, px, py, cellZ, cellZ)
         } else {
-          // Procedural terrain
-          const proc = getProceduralBiome(wx, wy)
-          drawSatGround(ctx, proc.biome, 0, 0, wx, wy)
-          if (proc.hasTree && proc.biome !== "water") {
-            drawSatTree(ctx, 0, 0, wx, wy, proc.treeVariant)
+          // Fallback: draw a simple color fill while bitmap renders in background
+          const inVillage = wx >= 0 && wx < MAP_SIZE && wy >= 0 && wy < MAP_SIZE
+          const biome = inVillage
+            ? (map[wy]?.[wx]?.biome ?? "plains")
+            : getProceduralTile(wx, wy).biome
+          const fallbackColors: Record<string, string> = {
+            plains: "#5a8a3a",
+            forest: "#2d5a27",
+            water: "#2a5a7a",
+            mountain: "#7a7570",
+            desert: "#c4a870",
+          }
+          ctx.fillStyle = fallbackColors[biome] ?? "#5a8a3a"
+          ctx.fillRect(px, py, cellZ, cellZ)
+
+          // Request async bitmap render
+          if (!cached) {
+            cache.set(key, "pending")
+            renderTileBitmap(wx, wy, map, phase).then(bmp => {
+              cache.set(key, bmp)
+              // Evict old entries if cache is too large
+              if (cache.size > CACHE_MAX) {
+                const iter = cache.keys()
+                for (let i = 0; i < 500; i++) {
+                  const k = iter.next().value
+                  if (k) cache.delete(k)
+                }
+              }
+            })
           }
         }
-
-        ctx.restore()
       }
     }
 
-    // ── Pass 2: Buildings ──
+    // ── Paths & buildings (village only) ──
     for (let dy = 0; dy < tilesH; dy++) {
       const wy = startWY + dy
       for (let dx = 0; dx < tilesW; dx++) {
         const wx = startWX + dx
-        const px = offsetPx.x + dx * cellZoomed
-        const py = offsetPx.y + dy * cellZoomed
-        if (px + cellZoomed < 0 || py + cellZoomed < 0 || px > cw || py > ch) continue
-
-        const vilX = wx - VILLAGE_OFFSET_X
-        const vilY = wy - VILLAGE_OFFSET_Y
-        const inVillage = vilX >= 0 && vilX < MAP_SIZE && vilY >= 0 && vilY < MAP_SIZE
-        if (!inVillage) continue
-
-        const tile = map[vilY]?.[vilX]
-        if (!tile?.building) continue
+        if (wx < 0 || wx >= MAP_SIZE || wy < 0 || wy >= MAP_SIZE) continue
+        const tile = map[wy]?.[wx]
+        if (!tile) continue
+        const px = offsetPx.x + dx * cellZ
+        const py = offsetPx.y + dy * cellZ
+        if (px + cellZ < 0 || py + cellZ < 0 || px > cw || py > ch) continue
 
         ctx.save()
         ctx.translate(px, py)
         ctx.scale(zoom, zoom)
 
-        if (GLOW_BUILDINGS[tile.building]) {
-          GLOW_BUILDINGS[tile.building](ctx, 0, 0, windowGlow)
-        } else if (SIMPLE_BUILDINGS[tile.building]) {
-          SIMPLE_BUILDINGS[tile.building](ctx, 0, 0)
-        }
+        if (tile.hasPath) drawPath(ctx, 0, 0, map, wx, wy)
+
+        if (tile.building === "house") drawHouse(ctx, 0, 0, windowGlow, wx, wy)
+        else if (tile.building === "farm") drawFarm(ctx, 0, 0, wx, wy)
+        else if (tile.building === "council") drawCouncil(ctx, 0, 0, windowGlow)
+        else if (tile.building === "watchtower") drawWatchtower(ctx, 0, 0, windowGlow)
+        else if (tile.building === "storehouse") drawStorehouse(ctx, 0, 0, wx, wy)
+        else if (tile.building === "well") drawWell(ctx, 0, 0)
+        else if (tile.building === "wall") drawWall(ctx, 0, 0, wx, wy)
 
         ctx.restore()
       }
     }
 
-    // ── Pass 3: Agents ──
+    // ── Agents ──
     for (let dy = 0; dy < tilesH; dy++) {
       const wy = startWY + dy
       for (let dx = 0; dx < tilesW; dx++) {
         const wx = startWX + dx
-        const vilX = wx - VILLAGE_OFFSET_X
-        const vilY = wy - VILLAGE_OFFSET_Y
-        const agentInfo = agentPositions.get(`${vilX},${vilY}`)
+        const agentInfo = agentPositions.get(`${wx},${wy}`)
         if (!agentInfo) continue
-
-        const px = offsetPx.x + dx * cellZoomed
-        const py = offsetPx.y + dy * cellZoomed
-        if (px + cellZoomed < 0 || py + cellZoomed < 0 || px > cw || py > ch) continue
+        const px = offsetPx.x + dx * cellZ
+        const py = offsetPx.y + dy * cellZ
+        if (px + cellZ < 0 || py + cellZ < 0 || px > cw || py > ch) continue
 
         ctx.save()
         ctx.translate(px, py)
         ctx.scale(zoom, zoom)
-        drawSatAgent(ctx, 0, 0, agentInfo.agent, agentInfo.index, tick)
+        drawAgent(ctx, 0, 0, agentInfo.agent, agentInfo.index, tick)
         ctx.restore()
       }
     }
 
-    // ── Phase tint overlay ──
+    // ── Phase tint ──
     if (tint.a > 0) {
       ctx.fillStyle = `rgba(${tint.r},${tint.g},${tint.b},${tint.a})`
       ctx.fillRect(0, 0, cw, ch)
@@ -871,7 +860,7 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     return () => cancelAnimationFrame(rafRef.current)
   }, [render])
 
-  // ── Pan (drag) ──
+  // ── Pan ──
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     isDragging.current = true
     lastPos.current = { x: e.clientX, y: e.clientY }
@@ -881,46 +870,40 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     if (isDragging.current) {
       const dx = e.clientX - lastPos.current.x
       const dy = e.clientY - lastPos.current.y
-      const cellZoomed = CELL * zoom
       setCamera(prev => ({
-        x: prev.x - dx / cellZoomed,
-        y: prev.y - dy / cellZoomed,
+        x: prev.x - dx / (CELL * zoom),
+        y: prev.y - dy / (CELL * zoom),
       }))
       lastPos.current = { x: e.clientX, y: e.clientY }
     }
 
-    // Hover detection
     const canvas = canvasRef.current
     if (canvas) {
       const rect = canvas.getBoundingClientRect()
-      const cellZoomed = CELL * zoom
-      const tilesW = Math.ceil(containerSize.w / cellZoomed) + 2
-      const tilesH = Math.ceil(containerSize.h / cellZoomed) + 2
+      const cellZ = CELL * zoom
+      const tilesW = Math.ceil(containerSize.w / cellZ) + 2
+      const tilesH = Math.ceil(containerSize.h / cellZ) + 2
       const startWX = camera.x - Math.floor(tilesW / 2)
       const startWY = camera.y - Math.floor(tilesH / 2)
-      const offsetPxX = (containerSize.w / 2) - (camera.x - startWX) * cellZoomed
-      const offsetPxY = (containerSize.h / 2) - (camera.y - startWY) * cellZoomed
-
+      const oX = containerSize.w / 2 - (camera.x - startWX) * cellZ
+      const oY = containerSize.h / 2 - (camera.y - startWY) * cellZ
       const mx = e.clientX - rect.left
       const my = e.clientY - rect.top
-      const tileX = Math.floor((mx - offsetPxX) / cellZoomed) + startWX
-      const tileY = Math.floor((my - offsetPxY) / cellZoomed) + startWY
-      setHoveredTile({ x: tileX, y: tileY })
+      setHoveredTile({
+        x: Math.floor((mx - oX) / cellZ) + startWX,
+        y: Math.floor((my - oY) / cellZ) + startWY,
+      })
     }
   }, [zoom, camera, containerSize])
 
-  const handleMouseUp = useCallback(() => {
-    isDragging.current = false
-  }, [])
+  const handleMouseUp = useCallback(() => { isDragging.current = false }, [])
 
-  // ── Zoom (wheel) ──
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
-    const delta = e.deltaY > 0 ? -0.12 : 0.12
-    setZoom(z => Math.max(0.3, Math.min(5, z + delta)))
+    setZoom(z => Math.max(0.3, Math.min(5, z + (e.deltaY > 0 ? -0.12 : 0.12))))
   }, [])
 
-  // Touch support
+  // Touch
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       isDragging.current = true
@@ -932,34 +915,27 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     if (isDragging.current && e.touches.length === 1) {
       const dx = e.touches[0].clientX - lastPos.current.x
       const dy = e.touches[0].clientY - lastPos.current.y
-      const cellZoomed = CELL * zoom
       setCamera(prev => ({
-        x: prev.x - dx / cellZoomed,
-        y: prev.y - dy / cellZoomed,
+        x: prev.x - dx / (CELL * zoom),
+        y: prev.y - dy / (CELL * zoom),
       }))
       lastPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
     }
   }, [zoom])
 
-  const handleTouchEnd = useCallback(() => {
-    isDragging.current = false
-  }, [])
+  const handleTouchEnd = useCallback(() => { isDragging.current = false }, [])
 
   // Hover info
   const ht = hoveredTile
-  const vilHX = ht ? ht.x - VILLAGE_OFFSET_X : -1
-  const vilHY = ht ? ht.y - VILLAGE_OFFSET_Y : -1
-  const inVillageHover = vilHX >= 0 && vilHX < MAP_SIZE && vilHY >= 0 && vilHY < MAP_SIZE
-  const hoveredInfo = inVillageHover ? map[vilHY]?.[vilHX] : null
-  const hoveredAgent = ht ? agentPositions.get(`${vilHX},${vilHY}`) : null
-  const procHover = !inVillageHover && ht ? getProceduralBiome(ht.x, ht.y) : null
+  const inVH = ht ? ht.x >= 0 && ht.x < MAP_SIZE && ht.y >= 0 && ht.y < MAP_SIZE : false
+  const hovInfo = inVH && ht ? map[ht.y]?.[ht.x] : null
+  const hovAgent = ht ? agentPositions.get(`${ht.x},${ht.y}`) : null
+  const procHov = !inVH && ht ? getProceduralTile(ht.x, ht.y) : null
 
   return (
     <div className="relative w-full h-full overflow-hidden" ref={containerRef}>
-      {/* Subtle vignette */}
-      <div className="absolute inset-0 pointer-events-none z-20 bg-[radial-gradient(ellipse_at_center,transparent_65%,hsl(var(--background))_100%)] opacity-30" />
+      <div className="absolute inset-0 pointer-events-none z-20 bg-[radial-gradient(ellipse_at_center,transparent_65%,hsl(var(--background))_100%)] opacity-20" />
 
-      {/* Canvas */}
       <div
         className="relative h-full w-full overflow-hidden cursor-grab active:cursor-grabbing"
         onWheel={handleWheel}
@@ -975,38 +951,34 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
       </div>
 
       {/* Hover tooltip */}
-      {ht && (hoveredInfo || procHover) && (
+      {ht && (hovInfo || procHov) && (
         <div className="absolute top-3 left-3 z-30 bg-background/80 backdrop-blur-xl border border-border/50 rounded-lg px-3 py-2 text-xs shadow-lg">
           <p className="font-mono font-bold capitalize text-foreground">
-            {hoveredInfo?.biome ?? procHover?.biome ?? "unknown"}
+            {hovInfo?.biome ?? procHov?.biome ?? "unknown"}
           </p>
-          {hoveredInfo?.building && (
+          {hovInfo?.building && (
             <p className="text-muted-foreground capitalize">
-              Building: <span className="text-foreground">{hoveredInfo.building}</span>
+              Building: <span className="text-foreground">{hovInfo.building}</span>
             </p>
           )}
-          {hoveredAgent && (
+          {hovAgent && (
             <p className="text-primary font-semibold mt-0.5">
-              {hoveredAgent.agent.name} ({hoveredAgent.agent.archetype})
+              {hovAgent.agent.name} ({hovAgent.agent.archetype})
             </p>
           )}
-          {inVillageHover && (
-            <span className="text-primary/50 font-mono text-[9px]">Village</span>
-          )}
-          {!inVillageHover && (
-            <span className="text-muted-foreground/50 font-mono text-[9px]">Wilderness</span>
-          )}
-          <p className="text-muted-foreground/40 mt-0.5 font-mono text-[9px]">[{ht.x}, {ht.y}]</p>
+          <span className={`font-mono text-[9px] ${inVH ? "text-primary/50" : "text-muted-foreground/50"}`}>
+            {inVH ? "Village" : "Wilderness"} [{ht.x}, {ht.y}]
+          </span>
         </div>
       )}
 
-      {/* Camera & zoom info */}
+      {/* Zoom info */}
       <div className="absolute top-3 right-3 z-30 bg-background/60 backdrop-blur-md border border-border/40 rounded-md px-2 py-1 flex items-center gap-2">
         <span className="font-mono text-[10px] text-muted-foreground capitalize">{cameraMode.replace("_", " ")}</span>
         <span className="font-mono text-[10px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
       </div>
 
-      {/* Center on village button */}
+      {/* Center village */}
       <button
         type="button"
         onClick={() => { setCamera({ x: 30, y: 30 }); setZoom(1) }}
@@ -1015,14 +987,14 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
         Center Village
       </button>
 
-      {/* Mini legend */}
+      {/* Legend */}
       <div className="absolute bottom-28 right-3 z-30 bg-background/60 backdrop-blur-md border border-border/40 rounded-md px-2 py-1.5 flex flex-col gap-1">
         {[
           { label: "Forest", color: "#2d5a27" },
           { label: "Plains", color: "#5a8a3a" },
-          { label: "Water", color: "#2a6a90" },
+          { label: "Water", color: "#2a5a7a" },
           { label: "Mountain", color: "#7a7570" },
-          { label: "Desert", color: "#c4a855" },
+          { label: "Desert", color: "#c4a870" },
         ].map((item) => (
           <div key={item.label} className="flex items-center gap-1.5">
             <div className="h-2 w-2 rounded-sm" style={{ backgroundColor: item.color }} />
@@ -1031,7 +1003,7 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
         ))}
       </div>
 
-      {/* Metrics ribbon */}
+      {/* Metrics */}
       {metrics && (
         <div className="absolute bottom-3 left-3 right-20 z-30 flex flex-wrap gap-2">
           <MetricPill label="POP" value={metrics.population} />
