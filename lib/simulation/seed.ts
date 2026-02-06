@@ -128,23 +128,62 @@ function generateMap(): MapTile[][] {
     map.push(row)
   }
 
-  // Place paths
-  for (let i = 25; i < 35; i++) {
-    if (map[30]?.[i]) map[30][i].hasPath = true
-    if (map[i]?.[30]) map[i][30].hasPath = true
+  // Place paths - cross roads through the village
+  for (let i = 24; i < 37; i++) {
+    if (map[30]?.[i]) map[30][i].hasPath = true  // East-West road
+    if (map[i]?.[30]) map[i][30].hasPath = true  // North-South road
+  }
+  // Secondary paths connecting buildings
+  for (let i = 27; i < 34; i++) {
+    if (map[28]?.[i]) map[28][i].hasPath = true  // Northern residential path
+    if (map[32]?.[i]) map[32][i].hasPath = true  // Southern farm path
+  }
+  // Connector paths
+  for (let i = 28; i < 33; i++) {
+    if (map[i]?.[27]) map[i][27].hasPath = true  // West connector
+    if (map[i]?.[33]) map[i][33].hasPath = true  // East connector
   }
 
-  // Place buildings around center
+  // Place buildings around center - a proper village layout
   const buildings: { x: number; y: number; type: MapTile["building"] }[] = [
+    // Town center
     { x: 30, y: 30, type: "council" },
-    { x: 28, y: 28, type: "house" },
-    { x: 32, y: 28, type: "house" },
-    { x: 28, y: 32, type: "farm" },
-    { x: 32, y: 32, type: "storehouse" },
-    { x: 26, y: 30, type: "well" },
-    { x: 34, y: 30, type: "watchtower" },
-    { x: 30, y: 26, type: "wall" },
-    { x: 30, y: 34, type: "house" },
+    { x: 29, y: 30, type: "well" },
+    // Residential area (north)
+    { x: 28, y: 27, type: "house" },
+    { x: 30, y: 27, type: "house" },
+    { x: 32, y: 27, type: "house" },
+    { x: 27, y: 28, type: "house" },
+    { x: 33, y: 28, type: "house" },
+    { x: 29, y: 26, type: "house" },
+    { x: 31, y: 26, type: "house" },
+    // Farming district (south)
+    { x: 27, y: 32, type: "farm" },
+    { x: 29, y: 32, type: "farm" },
+    { x: 31, y: 32, type: "farm" },
+    { x: 28, y: 33, type: "farm" },
+    { x: 30, y: 33, type: "farm" },
+    { x: 32, y: 33, type: "farm" },
+    // Storage
+    { x: 33, y: 30, type: "storehouse" },
+    { x: 34, y: 31, type: "storehouse" },
+    // Defenses
+    { x: 25, y: 30, type: "watchtower" },
+    { x: 35, y: 30, type: "watchtower" },
+    { x: 30, y: 25, type: "watchtower" },
+    { x: 30, y: 35, type: "watchtower" },
+    // Walls (perimeter)
+    { x: 26, y: 26, type: "wall" },
+    { x: 27, y: 26, type: "wall" },
+    { x: 28, y: 26, type: "wall" },
+    { x: 32, y: 26, type: "wall" },
+    { x: 33, y: 26, type: "wall" },
+    { x: 34, y: 26, type: "wall" },
+    { x: 26, y: 34, type: "wall" },
+    { x: 27, y: 34, type: "wall" },
+    { x: 34, y: 34, type: "wall" },
+    // Well near farms
+    { x: 31, y: 34, type: "well" },
   ]
 
   for (const b of buildings) {
