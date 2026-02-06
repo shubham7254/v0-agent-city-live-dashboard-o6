@@ -19,6 +19,15 @@ const CAMERA_MODES: { value: CameraMode; label: string }[] = [
   { value: "free", label: "Free Camera" },
 ]
 
+function formatRealTime(): string {
+  const now = new Date()
+  return now.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  })
+}
+
 function formatSimHour(hour: number): string {
   const h = hour % 24
   const ampm = h >= 12 ? "PM" : "AM"
@@ -42,6 +51,15 @@ export default function LivePage() {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false)
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [councilOpen, setCouncilOpen] = useState(false)
+  const [realClock, setRealClock] = useState(formatRealTime())
+
+  // Update real clock every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRealClock(formatRealTime())
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   // Auto-initialize state if empty
   useEffect(() => {
@@ -51,13 +69,14 @@ export default function LivePage() {
     }
   }, [isLoading, state, initialized, triggerTick])
 
-  // Auto-tick every 6 seconds (each tick = 1 hour in sim)
+  // Real-time sync: tick every 30 seconds to stay in sync with the real clock
+  // The engine reads the actual system clock, so ticks just trigger updates
   useEffect(() => {
     const interval = setInterval(() => {
       if (state && !state.paused) {
         triggerTick()
       }
-    }, 6000)
+    }, 30000) // 30s polling to stay responsive to real hour changes
     return () => clearInterval(interval)
   }, [state, triggerTick])
 
@@ -326,12 +345,16 @@ export default function LivePage() {
                 onClick={triggerTick}
               >
                 <Radio className="h-3 w-3" />
-                +1hr
+                Sync
               </Button>
-              {/* Clock display */}
-              <div className="glass-panel rounded-md px-2.5 py-1.5">
+              {/* Real-time clock display */}
+              <div className="glass-panel rounded-md px-3 py-1.5 flex items-center gap-2">
+                <div className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] animate-pulse" />
                 <span className="font-mono text-xs font-bold text-foreground">
-                  {formatSimHour(state.hour)}
+                  {realClock}
+                </span>
+                <span className="font-mono text-[10px] text-muted-foreground uppercase">
+                  real time
                 </span>
               </div>
             </div>

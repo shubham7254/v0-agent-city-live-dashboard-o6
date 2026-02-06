@@ -25,6 +25,25 @@ function formatSimHour(hour: number): string {
   return `${h12}:00 ${ampm}`
 }
 
+function useRealClock() {
+  const [time, setTime] = useState("")
+  useEffect(() => {
+    const update = () =>
+      setTime(
+        new Date().toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: true,
+        })
+      )
+    update()
+    const id = setInterval(update, 1000)
+    return () => clearInterval(id)
+  }, [])
+  return time
+}
+
 const PHASE_ICONS: Record<Phase, React.ReactNode> = {
   morning: <Sun className="h-3.5 w-3.5 text-[hsl(var(--warning))]" />,
   day: <Sun className="h-3.5 w-3.5 text-[hsl(var(--warning))]" />,
@@ -58,15 +77,8 @@ export function BroadcastBar({
   lastUpdate,
   startedAt,
 }: BroadcastBarProps) {
-  const [uptime, setUptime] = useState("00:00:00")
+  const realClock = useRealClock()
   const [soundOn, setSoundOn] = useState(false)
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setUptime(formatUptime(startedAt))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [startedAt])
 
   return (
     <div className="glass-panel-strong flex items-center justify-between px-4 py-2 border-b border-[hsl(var(--hud-border)/.2)]">
@@ -92,8 +104,9 @@ export function BroadcastBar({
           <span className="font-mono text-muted-foreground">DAY</span>
           <span className="font-mono font-bold text-foreground">{day}</span>
         </div>
-        <div className="flex items-center gap-1.5 text-xs bg-secondary/60 rounded px-2 py-0.5">
-          <span className="font-mono font-bold text-foreground">{formatSimHour(hour)}</span>
+        <div className="flex items-center gap-2 text-xs bg-secondary/60 rounded px-2.5 py-1">
+          <div className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] animate-pulse" />
+          <span className="font-mono font-bold text-foreground tracking-wider">{realClock}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           {PHASE_ICONS[phase]}
@@ -103,8 +116,6 @@ export function BroadcastBar({
           {WEATHER_ICONS[weather]}
           <span className="font-mono capitalize">{weather}</span>
         </div>
-        <div className="h-4 w-px bg-border" />
-        <span className="font-mono text-xs text-muted-foreground">UP {uptime}</span>
       </div>
 
       {/* Right */}

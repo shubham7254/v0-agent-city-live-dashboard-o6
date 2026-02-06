@@ -205,6 +205,9 @@ function placeAgents(agents: typeof AGENT_TEMPLATES): Agent[] {
 
 export function createInitialState(): WorldState {
   const now = Date.now()
+  const realDate = new Date(now)
+  const realHour = realDate.getHours()
+
   const metrics: WorldMetrics = {
     population: 10,
     foodDays: 45,
@@ -220,7 +223,7 @@ export function createInitialState(): WorldState {
     proposals: [],
     currentSpeaker: null,
     dialogue: [],
-    nextCouncilIn: 13, // Council at 18:00, start at 5:00 = 13 hours
+    nextCouncilIn: realHour < 18 ? 18 - realHour : 24 - realHour + 18,
     isActive: false,
     startHour: 18,
     endHour: 21,
@@ -228,8 +231,15 @@ export function createInitialState(): WorldState {
 
   return {
     day: 1,
-    hour: 5,
-    phase: "morning",
+    hour: realHour,
+    phase:
+      realHour >= 5 && realHour <= 11
+        ? "morning"
+        : realHour >= 12 && realHour <= 17
+          ? "day"
+          : realHour >= 18 && realHour <= 21
+            ? "evening"
+            : "night",
     tick: 0,
     map: generateMap(),
     agents: placeAgents(AGENT_TEMPLATES),

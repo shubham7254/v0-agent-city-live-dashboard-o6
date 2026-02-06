@@ -21,6 +21,7 @@ export async function GET() {
         if (state) {
           send("state_update", {
             day: state.day,
+            hour: state.hour,
             phase: state.phase,
             tick: state.tick,
             metrics: state.metrics,
@@ -53,6 +54,7 @@ export async function GET() {
 
             send("state_update", {
               day: state.day,
+              hour: state.hour,
               phase: state.phase,
               tick: state.tick,
               metrics: state.metrics,

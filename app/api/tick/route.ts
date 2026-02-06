@@ -51,6 +51,7 @@ export async function POST() {
 
     return NextResponse.json({
       day: result.state.day,
+      hour: result.state.hour,
       phase: result.state.phase,
       tick: result.state.tick,
       eventsCount: result.events.length,

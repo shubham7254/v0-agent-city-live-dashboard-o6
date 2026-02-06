@@ -480,18 +480,26 @@ export function executeTick(state: WorldState): TickResult {
   s.tick++
   s.lastTickAt = Date.now()
 
-  // Advance hour (1 tick = 1 hour)
-  s.hour = (s.hour + 1) % 24
-  if (s.hour === 0) {
+  // Sync hour with real-world clock
+  const now = new Date()
+  const realHour = now.getHours()
+  const prevHour = s.hour
+
+  // Detect if we crossed midnight (new day)
+  if (realHour < prevHour && prevHour >= 22) {
     s.day++
   }
 
-  // Update phase based on hour
+  s.hour = realHour
   s.phase = getPhaseForHour(s.hour)
 
-  // Update council countdown
-  if (s.council.nextCouncilIn > 0) {
-    s.council.nextCouncilIn--
+  // Update council countdown based on real time
+  if (s.hour < COUNCIL_START_HOUR) {
+    s.council.nextCouncilIn = COUNCIL_START_HOUR - s.hour
+  } else if (s.hour >= COUNCIL_END_HOUR) {
+    s.council.nextCouncilIn = 24 - s.hour + COUNCIL_START_HOUR
+  } else {
+    s.council.nextCouncilIn = 0
   }
 
   let events: WorldEvent[] = []
