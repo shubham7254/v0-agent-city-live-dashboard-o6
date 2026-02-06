@@ -1,8 +1,8 @@
 "use client"
 
-import { useRef, useMemo, useEffect, useCallback } from "react"
-import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import { OrthographicCamera, Environment } from "@react-three/drei"
+import { useRef, useMemo, useEffect } from "react"
+import { Canvas, useFrame } from "@react-three/fiber"
+import { OrthographicCamera, Environment, OrbitControls } from "@react-three/drei"
 import * as THREE from "three"
 import type { Agent, MapTile, Phase, WorldMetrics, CameraMode } from "@/lib/types"
 
@@ -282,7 +282,7 @@ function BuildingMesh({ x, z, type, phase }: { x: number; z: number; type: strin
           {[[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([sx, sz], i) => (
             <mesh key={i} position={[sx * fx * 0.4, h / 2, sz * fz * 0.4]} castShadow>
               <cylinderGeometry args={[0.025, 0.025, h, 6]} />
-              <meshStandardMaterial color="#5a4a3a" roughness={0.9} />
+              <meshStandardMaterial color="#5a4a3a" roughness={0.9} metalness={0.4} />
             </mesh>
           ))}
         </>
@@ -591,82 +591,7 @@ function Car({ startX, startZ, direction, index }: { startX: number; startZ: num
   )
 }
 
-// ═══════════════════════════════════════════════════
-// CAMERA SETUP (lookAt center on mount)
-// ═══════════════════════════════════════════════════
-function CameraSetup() {
-  const { camera } = useThree()
-  const initialized = useRef(false)
-
-  useEffect(() => {
-    if (initialized.current) return
-    initialized.current = true
-    camera.position.set(30, 40, 30)
-    camera.lookAt(0, 0, 0)
-    camera.updateProjectionMatrix()
-  }, [camera])
-
-  return null
-}
-
-// ═══════════════════════════════════════════════════
-// CAMERA CONTROLLER (pan + zoom with drag)
-// ═══════════════════════════════════════════════════
-function CameraController() {
-  const { camera, gl } = useThree()
-  const stateRef = useRef({ dragging: false, lastX: 0, lastY: 0 })
-
-  const onPointerDown = useCallback((e: PointerEvent) => {
-    stateRef.current.dragging = true
-    stateRef.current.lastX = e.clientX
-    stateRef.current.lastY = e.clientY
-  }, [])
-
-  const onPointerMove = useCallback((e: PointerEvent) => {
-    if (!stateRef.current.dragging) return
-    const dx = e.clientX - stateRef.current.lastX
-    const dy = e.clientY - stateRef.current.lastY
-    stateRef.current.lastX = e.clientX
-    stateRef.current.lastY = e.clientY
-
-    // Pan in the isometric plane
-    const panSpeed = 0.06
-    camera.position.x -= (dx * 0.7 + dy * 0.3) * panSpeed
-    camera.position.z -= (-dx * 0.3 + dy * 0.7) * panSpeed
-    // Keep the y-offset proportional so the view stays consistent
-    camera.position.y -= (-dx * 0.0 + dy * 0.3) * panSpeed
-  }, [camera])
-
-  const onPointerUp = useCallback(() => {
-    stateRef.current.dragging = false
-  }, [])
-
-  const onWheel = useCallback((e: WheelEvent) => {
-    e.preventDefault()
-    const oc = camera as THREE.OrthographicCamera
-    const factor = e.deltaY > 0 ? 0.92 : 1.08
-    oc.zoom = Math.max(0.4, Math.min(8, oc.zoom * factor))
-    oc.updateProjectionMatrix()
-  }, [camera])
-
-  useEffect(() => {
-    const dom = gl.domElement
-    dom.addEventListener("pointerdown", onPointerDown)
-    dom.addEventListener("pointermove", onPointerMove)
-    dom.addEventListener("pointerup", onPointerUp)
-    dom.addEventListener("pointerleave", onPointerUp)
-    dom.addEventListener("wheel", onWheel, { passive: false })
-    return () => {
-      dom.removeEventListener("pointerdown", onPointerDown)
-      dom.removeEventListener("pointermove", onPointerMove)
-      dom.removeEventListener("pointerup", onPointerUp)
-      dom.removeEventListener("pointerleave", onPointerUp)
-      dom.removeEventListener("wheel", onWheel)
-    }
-  }, [gl, onPointerDown, onPointerMove, onPointerUp, onWheel])
-
-  return null
-}
+// Camera controls are handled by OrbitControls in the Canvas
 
 // ═══════════════════════════════════════════════════
 // SCENE CONTENT
@@ -763,10 +688,6 @@ function SceneContent({ map, agents, phase }: { map: MapTile[][]; agents: Agent[
       {agents.map((agent) => (
         <PersonMesh key={agent.id} agent={agent} phase={phase} />
       ))}
-
-      {/* Camera setup + controller */}
-      <CameraSetup />
-      <CameraController />
     </>
   )
 }
@@ -797,13 +718,32 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       >
         <OrthographicCamera
           makeDefault
-          position={[30, 40, 30]}
-          zoom={16}
+          position={[20, 24, 20]}
+          zoom={22}
           near={0.1}
-          far={250}
-
+          far={300}
         />
-
+        <OrbitControls
+          target={[0, 0, 0]}
+          enableRotate={true}
+          enablePan={true}
+          enableZoom={true}
+          minZoom={6}
+          maxZoom={80}
+          maxPolarAngle={Math.PI / 2.5}
+          minPolarAngle={Math.PI / 8}
+          panSpeed={1.2}
+          zoomSpeed={1.2}
+          mouseButtons={{
+            LEFT: THREE.MOUSE.PAN,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: THREE.MOUSE.ROTATE,
+          }}
+          touches={{
+            ONE: THREE.TOUCH.PAN,
+            TWO: THREE.TOUCH.DOLLY_ROTATE,
+          }}
+        />
         <SceneContent map={map} agents={agents} phase={phase} />
       </Canvas>
 
@@ -827,10 +767,7 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       <button
         type="button"
         className="absolute bottom-3 right-28 z-20 glass-panel rounded-md px-2.5 py-1.5 font-mono text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-        onClick={() => {
-          // Reset is handled by re-mounting or page refresh
-          window.location.reload()
-        }}
+        onClick={() => window.location.reload()}
       >
         Center Village
       </button>
