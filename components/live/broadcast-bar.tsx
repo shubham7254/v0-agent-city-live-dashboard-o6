@@ -9,12 +9,20 @@ import type { Phase, WorldState } from "@/lib/types"
 
 interface BroadcastBarProps {
   day: number
+  hour: number
   phase: Phase
   weather: WorldState["weather"]
   paused: boolean
   sseConnected: boolean
   lastUpdate: number | null
   startedAt: number
+}
+
+function formatSimHour(hour: number): string {
+  const h = hour % 24
+  const ampm = h >= 12 ? "PM" : "AM"
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return `${h12}:00 ${ampm}`
 }
 
 const PHASE_ICONS: Record<Phase, React.ReactNode> = {

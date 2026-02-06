@@ -59,12 +59,24 @@ export interface Proposal {
   status: "pending" | "approved" | "rejected"
 }
 
+export interface CouncilDialogue {
+  agentId: string
+  message: string
+  timestamp: number
+  type: "proposal" | "opinion" | "debate" | "human_news_reaction" | "vote_statement"
+  referencedProposal?: string
+  referencedHumanEvent?: string
+}
+
 export interface CouncilSession {
   day: number
   proposals: Proposal[]
   currentSpeaker: string | null
-  dialogue: { agentId: string; message: string; timestamp: number }[]
+  dialogue: CouncilDialogue[]
   nextCouncilIn: number  // ticks
+  isActive: boolean
+  startHour: number
+  endHour: number
 }
 
 export interface NewsItem {
@@ -111,6 +123,7 @@ export interface WorldMetrics {
 
 export interface WorldState {
   day: number
+  hour: number         // 0-23
   phase: Phase
   tick: number
   map: MapTile[][]     // 60x60
@@ -125,6 +138,8 @@ export interface WorldState {
   lastTickAt: number
   paused: boolean
   tickRate: number     // ms between ticks
+  councilActive: boolean
+  councilAnnouncement: string | null
 }
 
 export interface Snapshot {

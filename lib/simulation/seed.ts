@@ -220,11 +220,15 @@ export function createInitialState(): WorldState {
     proposals: [],
     currentSpeaker: null,
     dialogue: [],
-    nextCouncilIn: 3,
+    nextCouncilIn: 13, // Council at 18:00, start at 5:00 = 13 hours
+    isActive: false,
+    startHour: 18,
+    endHour: 21,
   }
 
   return {
     day: 1,
+    hour: 5,
     phase: "morning",
     tick: 0,
     map: generateMap(),
@@ -277,5 +281,7 @@ export function createInitialState(): WorldState {
     lastTickAt: now,
     paused: false,
     tickRate: 10000,
+    councilActive: false,
+    councilAnnouncement: null,
   }
 }
