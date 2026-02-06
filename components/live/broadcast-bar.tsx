@@ -50,6 +50,7 @@ function formatUptime(startedAt: number): string {
 
 export function BroadcastBar({
   day,
+  hour,
   phase,
   weather,
   paused,
@@ -90,6 +91,9 @@ export function BroadcastBar({
         <div className="flex items-center gap-1.5 text-xs">
           <span className="font-mono text-muted-foreground">DAY</span>
           <span className="font-mono font-bold text-foreground">{day}</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs bg-secondary/60 rounded px-2 py-0.5">
+          <span className="font-mono font-bold text-foreground">{formatSimHour(hour)}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           {PHASE_ICONS[phase]}
