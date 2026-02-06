@@ -2,11 +2,14 @@
 
 export type Phase = "morning" | "day" | "evening" | "night"
 export type Biome = "water" | "forest" | "plains" | "mountain" | "desert"
-export type BuildingType = "house" | "farm" | "watchtower" | "council" | "storehouse" | "well" | "wall"
-export type AgentStatus = "sleeping" | "working" | "in_council" | "on_watch" | "idle" | "exploring"
+export type BuildingType =
+  | "house" | "farm" | "watchtower" | "council" | "storehouse" | "well" | "wall"
+  | "shop" | "market" | "hospital" | "school" | "college" | "inn" | "workshop" | "road"
+export type AgentStatus = "sleeping" | "working" | "in_council" | "on_watch" | "idle" | "exploring" | "studying" | "shopping" | "socializing" | "commuting"
 export type EventSeverity = "low" | "medium" | "high" | "critical"
 export type CameraMode = "follow_events" | "free" | "wide"
 export type VoteChoice = "yes" | "no" | "abstain"
+export type AgeGroup = "child" | "teen" | "adult" | "elder"
 
 export interface Position {
   x: number
@@ -17,42 +20,55 @@ export interface MapTile {
   biome: Biome
   building?: BuildingType
   hasPath?: boolean
-  floodRisk: number   // 0-1
-  fireRisk: number    // 0-1
+  floodRisk: number
+  fireRisk: number
 }
 
 export interface AgentPersonality {
-  aggression: number   // 0-100
+  aggression: number
   cooperation: number
   curiosity: number
   caution: number
   leadership: number
 }
 
+export interface DailySchedule {
+  wakeHour: number
+  sleepHour: number
+  workStartHour: number
+  workEndHour: number
+  lunchHour: number
+}
+
 export interface Agent {
   id: string
   name: string
   archetype: string
+  ageGroup: AgeGroup
+  age: number
   position: Position
   status: AgentStatus
-  energy: number       // 0-100
-  hunger: number       // 0-100
-  stress: number       // 0-100
-  influence: number    // 0-100
-  reputation: number   // 0-100
+  energy: number
+  hunger: number
+  stress: number
+  influence: number
+  reputation: number
   personality: AgentPersonality
+  schedule: DailySchedule
+  homePosition: Position
+  workPosition: Position
   recentQuotes: string[]
   recentActions: string[]
   voteHistory: VoteChoice[]
-  allies: string[]     // agent ids
-  rivals: string[]     // agent ids
+  allies: string[]
+  rivals: string[]
 }
 
 export interface Proposal {
   id: string
   title: string
   description: string
-  proposedBy: string   // agent id
+  proposedBy: string
   cost: number
   expectedImpact: { metric: string; direction: "up" | "down"; amount: number }[]
   votes: Record<string, VoteChoice>
@@ -73,7 +89,7 @@ export interface CouncilSession {
   proposals: Proposal[]
   currentSpeaker: string | null
   dialogue: CouncilDialogue[]
-  nextCouncilIn: number  // ticks
+  nextCouncilIn: number
   isActive: boolean
   startHour: number
   endHour: number
@@ -83,7 +99,7 @@ export interface NewsItem {
   id: string
   headline: string
   body: string
-  category: "morning_brief" | "breaking" | "night_recap"
+  category: string
   severity: EventSeverity
   day: number
   timestamp: number
@@ -115,18 +131,18 @@ export interface WorldMetrics {
   population: number
   foodDays: number
   waterDays: number
-  morale: number       // 0-100
-  unrest: number       // 0-100
-  healthRisk: number   // 0-100
-  fireStability: number // 0-100
+  morale: number
+  unrest: number
+  healthRisk: number
+  fireStability: number
 }
 
 export interface WorldState {
   day: number
-  hour: number         // 0-23
+  hour: number
   phase: Phase
   tick: number
-  map: MapTile[][]     // 60x60
+  map: MapTile[][]
   agents: Agent[]
   metrics: WorldMetrics
   council: CouncilSession
@@ -137,9 +153,10 @@ export interface WorldState {
   startedAt: number
   lastTickAt: number
   paused: boolean
-  tickRate: number     // ms between ticks
+  tickRate: number
   councilActive: boolean
   councilAnnouncement: string | null
+  lastProcessedHour: number
 }
 
 export interface Snapshot {
@@ -166,7 +183,6 @@ export interface SSEMessage {
   timestamp: number
 }
 
-// Brain provider interface
 export interface BrainProvider {
   generateProposal(agent: Agent, state: WorldState): Proposal
   generateVote(agent: Agent, proposal: Proposal, state: WorldState): VoteChoice

@@ -17,6 +17,10 @@ const STATUS_COLORS: Record<string, string> = {
   on_watch: "bg-[hsl(var(--warning))]",
   idle: "bg-muted-foreground/60",
   exploring: "bg-[hsl(var(--chart-5))]",
+  studying: "bg-[hsl(var(--primary)/.7)]",
+  shopping: "bg-pink-500/70",
+  socializing: "bg-amber-400/70",
+  commuting: "bg-muted-foreground/50",
 }
 
 function MeterBar({ value, color, label }: { value: number; color: string; label: string }) {
@@ -92,7 +96,7 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
             </div>
             <div>
               <h3 className="font-semibold text-foreground">{agent.name}</h3>
-              <p className="text-xs text-muted-foreground">{agent.archetype}</p>
+          <p className="text-xs text-muted-foreground">{agent.archetype} &middot; {agent.age}y</p>
             </div>
           </div>
           <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground" aria-label="Close drawer">

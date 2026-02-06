@@ -539,6 +539,243 @@ function drawWall(ctx: CanvasRenderingContext2D, px: number, py: number, wx: num
   }
 }
 
+// ===== NEW BUILDING RENDERERS =====
+
+function drawShop(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number, wx: number, wy: number) {
+  const h = hash2d(wx * 23 + 1, wy * 13 + 9)
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 24 + h * 4
+  const hh = 18 + h * 4
+
+  ctx.fillStyle = "rgba(0,0,0,0.2)"
+  roundRect(ctx, cx - w / 2 + 4, cy - hh / 2 + 4, w, hh, 2)
+  ctx.fill()
+
+  // Colorful shop roof
+  const shopHue = 30 + h * 180
+  ctx.fillStyle = `hsl(${shopHue}, 35%, 35%)`
+  roundRect(ctx, cx - w / 2, cy - hh / 2, w, hh, 2)
+  ctx.fill()
+
+  // Awning
+  ctx.fillStyle = `hsl(${shopHue}, 45%, 50%)`
+  ctx.fillRect(cx - w / 2, cy + hh / 2 - 5, w, 5)
+
+  // Stripes on awning
+  ctx.strokeStyle = `hsl(${shopHue}, 45%, 60%)`
+  ctx.lineWidth = 0.8
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath()
+    ctx.moveTo(cx - w / 2 + 3 + i * 6, cy + hh / 2 - 5)
+    ctx.lineTo(cx - w / 2 + 3 + i * 6, cy + hh / 2)
+    ctx.stroke()
+  }
+
+  if (wg > 0.2) {
+    ctx.fillStyle = `rgba(255,220,120,${wg * 0.18})`
+    ctx.fillRect(cx - 4, cy - 3, 8, 4)
+  }
+}
+
+function drawMarket(ctx: CanvasRenderingContext2D, px: number, py: number, wx: number, wy: number) {
+  const h = hash2d(wx * 11 + 3, wy * 7 + 1)
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+
+  // Open air market stall with canopy
+  ctx.fillStyle = "rgba(0,0,0,0.15)"
+  ctx.fillRect(cx - 14 + 3, cy - 10 + 3, 28, 20)
+
+  // Canopy
+  const canopyHue = 10 + h * 30
+  ctx.fillStyle = `hsl(${canopyHue}, 55%, 45%)`
+  roundRect(ctx, cx - 14, cy - 10, 28, 20, 2)
+  ctx.fill()
+
+  // Support poles
+  ctx.fillStyle = "#5a4a3a"
+  ctx.fillRect(cx - 12, cy - 8, 2, 16)
+  ctx.fillRect(cx + 10, cy - 8, 2, 16)
+
+  // Goods display
+  ctx.fillStyle = `hsl(${40 + h * 20}, 60%, 55%)`
+  ctx.fillRect(cx - 8, cy - 2, 5, 4)
+  ctx.fillStyle = `hsl(${120 + h * 30}, 50%, 45%)`
+  ctx.fillRect(cx + 2, cy - 2, 5, 4)
+}
+
+function drawHospital(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 32
+  const h = 26
+
+  ctx.fillStyle = "rgba(0,0,0,0.25)"
+  roundRect(ctx, cx - w / 2 + 4, cy - h / 2 + 4, w, h, 2)
+  ctx.fill()
+
+  // White/cream building
+  ctx.fillStyle = "#e8e2d8"
+  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 2)
+  ctx.fill()
+
+  // Red cross on roof
+  ctx.fillStyle = "#c0392b"
+  ctx.fillRect(cx - 1.5, cy - 6, 3, 12)
+  ctx.fillRect(cx - 6, cy - 1.5, 12, 3)
+
+  // Dark roof edge
+  ctx.strokeStyle = "rgba(0,0,0,0.15)"
+  ctx.lineWidth = 1
+  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 2)
+  ctx.stroke()
+
+  if (wg > 0.2) {
+    ctx.fillStyle = `rgba(200,255,255,${wg * 0.15})`
+    ctx.beginPath()
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+function drawSchool(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 28
+  const h = 22
+
+  ctx.fillStyle = "rgba(0,0,0,0.22)"
+  roundRect(ctx, cx - w / 2 + 4, cy - h / 2 + 4, w, h, 2)
+  ctx.fill()
+
+  // Warm brick building
+  ctx.fillStyle = "#a0522d"
+  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 2)
+  ctx.fill()
+
+  // Lighter roof peak
+  ctx.fillStyle = "#8b4513"
+  ctx.beginPath()
+  ctx.moveTo(cx, cy - h / 2 - 3)
+  ctx.lineTo(cx - w / 2 + 2, cy - h / 2 + 5)
+  ctx.lineTo(cx + w / 2 - 2, cy - h / 2 + 5)
+  ctx.closePath()
+  ctx.fill()
+
+  // Bell tower
+  ctx.fillStyle = "#8b7355"
+  ctx.fillRect(cx - 2, cy - h / 2 - 6, 4, 5)
+  ctx.fillStyle = "#d4a017"
+  ctx.beginPath()
+  ctx.arc(cx, cy - h / 2 - 5, 1.5, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Windows
+  if (wg > 0.15) {
+    ctx.fillStyle = `rgba(255,230,150,${wg * 0.2})`
+    ctx.fillRect(cx - 8, cy - 2, 4, 3)
+    ctx.fillRect(cx + 4, cy - 2, 4, 3)
+  }
+}
+
+function drawCollege(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number) {
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 30
+  const h = 24
+
+  ctx.fillStyle = "rgba(0,0,0,0.25)"
+  roundRect(ctx, cx - w / 2 + 4, cy - h / 2 + 4, w, h, 2)
+  ctx.fill()
+
+  // Grand stone building
+  ctx.fillStyle = "#8a8070"
+  roundRect(ctx, cx - w / 2, cy - h / 2, w, h, 2)
+  ctx.fill()
+
+  // Columns
+  ctx.fillStyle = "#a09888"
+  for (let i = 0; i < 4; i++) {
+    const colX = cx - w / 2 + 5 + i * (w - 10) / 3
+    ctx.fillRect(colX - 1, cy - h / 2 + 2, 2, h - 4)
+  }
+
+  // Dome
+  ctx.fillStyle = "#706860"
+  ctx.beginPath()
+  ctx.arc(cx, cy - h / 2 + 2, 6, Math.PI, 0)
+  ctx.fill()
+
+  if (wg > 0.2) {
+    ctx.fillStyle = `rgba(255,240,180,${wg * 0.12})`
+    ctx.fillRect(cx - 6, cy - 1, 12, 4)
+  }
+}
+
+function drawInn(ctx: CanvasRenderingContext2D, px: number, py: number, wg: number, wx: number, wy: number) {
+  const h = hash2d(wx * 17 + 5, wy * 23 + 3)
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 26
+  const hh = 22
+
+  ctx.fillStyle = "rgba(0,0,0,0.22)"
+  roundRect(ctx, cx - w / 2 + 4, cy - hh / 2 + 4, w, hh, 2)
+  ctx.fill()
+
+  // Warm wooden building
+  ctx.fillStyle = "#6b4226"
+  roundRect(ctx, cx - w / 2, cy - hh / 2, w, hh, 2)
+  ctx.fill()
+
+  // Sign
+  ctx.fillStyle = "#d4a017"
+  ctx.fillRect(cx - 3, cy - hh / 2 - 2, 6, 3)
+
+  // Door
+  ctx.fillStyle = "#3a2010"
+  ctx.fillRect(cx - 2, cy + hh / 2 - 5, 4, 5)
+
+  if (wg > 0.3) {
+    ctx.fillStyle = `rgba(255,180,80,${wg * 0.25})`
+    ctx.beginPath()
+    ctx.arc(cx, cy, 8, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+function drawWorkshop(ctx: CanvasRenderingContext2D, px: number, py: number, wx: number, wy: number) {
+  const h = hash2d(wx * 29 + 7, wy * 11 + 13)
+  const cx = px + CELL / 2
+  const cy = py + CELL / 2
+  const w = 26
+  const hh = 20
+
+  ctx.fillStyle = "rgba(0,0,0,0.2)"
+  roundRect(ctx, cx - w / 2 + 3, cy - hh / 2 + 3, w, hh, 1)
+  ctx.fill()
+
+  // Industrial building
+  ctx.fillStyle = "#5a5550"
+  roundRect(ctx, cx - w / 2, cy - hh / 2, w, hh, 1)
+  ctx.fill()
+
+  // Chimney with smoke
+  ctx.fillStyle = "#444"
+  ctx.fillRect(cx + w / 2 - 7, cy - hh / 2 - 4, 4, 6)
+
+  // Smoke
+  ctx.fillStyle = "rgba(100,100,100,0.3)"
+  ctx.beginPath()
+  ctx.arc(cx + w / 2 - 5, cy - hh / 2 - 6, 3, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Door
+  ctx.fillStyle = "#3a3530"
+  ctx.fillRect(cx - 3, cy + hh / 2 - 4, 6, 4)
+}
+
 // ===== PATH DRAWING (road from above) =====
 function drawPath(ctx: CanvasRenderingContext2D, px: number, py: number, map: MapTile[][], vx: number, vy: number) {
   const pathW = CELL * 0.35
@@ -573,69 +810,105 @@ function drawPath(ctx: CanvasRenderingContext2D, px: number, py: number, map: Ma
 }
 
 // ===== AGENTS =====
-const AGENT_COLORS = [
-  "#26c6da", "#66bb6a", "#ef5350", "#ffa726", "#ab47bc",
-  "#42a5f5", "#ec407a", "#8d6e63", "#78909c", "#ffca28",
-]
+// Age-based colors
+function getAgentColor(agent: Agent): string {
+  switch (agent.ageGroup) {
+    case "child": return "#ffca28"   // Gold/yellow for kids
+    case "teen": return "#42a5f5"    // Blue for teens
+    case "elder": return "#ab47bc"   // Purple for elders
+    default: {
+      // Adults colored by role category
+      if (["Doctor", "Nurse", "Healer", "Herbalist"].includes(agent.archetype)) return "#ef5350"    // Red for medical
+      if (["Guard", "Scout", "Warrior"].includes(agent.archetype)) return "#ffa726"                  // Orange for security
+      if (["Farmer", "Fisher", "Hunter"].includes(agent.archetype)) return "#66bb6a"                 // Green for food
+      if (["Teacher", "Professor", "Librarian"].includes(agent.archetype)) return "#26c6da"          // Cyan for education
+      if (["Shopkeeper", "Merchant", "Baker", "Tailor"].includes(agent.archetype)) return "#ec407a"  // Pink for commerce
+      if (["Builder", "Blacksmith", "Carpenter", "Mason"].includes(agent.archetype)) return "#8d6e63" // Brown for trades
+      return "#78909c"
+    }
+  }
+}
 
-function drawAgent(ctx: CanvasRenderingContext2D, px: number, py: number, agent: Agent, index: number, tick: number) {
+function getAgentSize(agent: Agent): number {
+  switch (agent.ageGroup) {
+    case "child": return 3
+    case "teen": return 4
+    case "elder": return 4.5
+    default: return 5
+  }
+}
+
+function drawAgent(ctx: CanvasRenderingContext2D, px: number, py: number, agent: Agent, index: number, tick: number, currentZoom: number) {
   const cx = px + CELL / 2
   const cy = py + CELL / 2
-  const color = AGENT_COLORS[index % AGENT_COLORS.length]
-  const pulse = 0.85 + Math.sin(tick * 0.05 + index * 1.2) * 0.15
+  const color = getAgentColor(agent)
+  const size = getAgentSize(agent)
+  const pulse = 0.9 + Math.sin(tick * 0.04 + index * 0.8) * 0.1
 
-  // Glow
-  ctx.fillStyle = color + "20"
+  // Sleeping agents are dimmed
+  const isSleeping = agent.status === "sleeping"
+  const alpha = isSleeping ? "50" : "cc"
+
+  // Small glow
+  ctx.fillStyle = color + "15"
   ctx.beginPath()
-  ctx.arc(cx, cy, 11 * pulse, 0, Math.PI * 2)
+  ctx.arc(cx, cy, (size + 4) * pulse, 0, Math.PI * 2)
   ctx.fill()
 
   // Ring
-  ctx.strokeStyle = color
-  ctx.lineWidth = 2
+  ctx.strokeStyle = color + (isSleeping ? "40" : "")
+  ctx.lineWidth = 1.5
   ctx.beginPath()
-  ctx.arc(cx, cy, 6, 0, Math.PI * 2)
+  ctx.arc(cx, cy, size + 1, 0, Math.PI * 2)
   ctx.stroke()
 
   // Fill
-  ctx.fillStyle = color + "cc"
+  ctx.fillStyle = color + alpha
   ctx.beginPath()
-  ctx.arc(cx, cy, 4.5, 0, Math.PI * 2)
+  ctx.arc(cx, cy, size, 0, Math.PI * 2)
   ctx.fill()
 
-  // Center
-  ctx.fillStyle = "#fff"
+  // Center dot
+  ctx.fillStyle = isSleeping ? "rgba(255,255,255,0.3)" : "#fff"
   ctx.beginPath()
-  ctx.arc(cx, cy, 1.5, 0, Math.PI * 2)
+  ctx.arc(cx, cy, 1.2, 0, Math.PI * 2)
   ctx.fill()
 
-  // Name
-  const name = agent.name.length > 7 ? agent.name.slice(0, 7) : agent.name
-  ctx.font = "bold 8px system-ui, sans-serif"
-  ctx.textAlign = "center"
-  ctx.textBaseline = "bottom"
-  const tw = ctx.measureText(name).width
-  ctx.fillStyle = "rgba(0,0,0,0.65)"
-  roundRect(ctx, cx - tw / 2 - 3, cy - 17, tw + 6, 12, 3)
-  ctx.fill()
-  ctx.fillStyle = "#fff"
-  ctx.fillText(name, cx, cy - 7)
+  // Name label (only when zoomed in enough, skip for sleeping at night)
+  if (currentZoom > 0.7 && !isSleeping) {
+    const label = agent.ageGroup === "child" ? agent.name : `${agent.name}`
+    ctx.font = "bold 7px system-ui, sans-serif"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "bottom"
+    const tw = ctx.measureText(label).width
+    ctx.fillStyle = "rgba(0,0,0,0.55)"
+    roundRect(ctx, cx - tw / 2 - 2, cy - 14, tw + 4, 10, 2)
+    ctx.fill()
+    ctx.fillStyle = "#fff"
+    ctx.fillText(label, cx, cy - 5.5)
+  }
 
   // Status dot
   const sc =
     agent.status === "working" ? "#4caf50" :
-    agent.status === "sleeping" ? "#78909c" :
+    agent.status === "sleeping" ? "#455a64" :
     agent.status === "in_council" ? "#26c6da" :
     agent.status === "on_watch" ? "#ffa726" :
-    agent.status === "exploring" ? "#ab47bc" : "#9e9e9e"
-  ctx.fillStyle = "#000"
-  ctx.beginPath()
-  ctx.arc(cx + 6, cy + 5, 3.5, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.fillStyle = sc
-  ctx.beginPath()
-  ctx.arc(cx + 6, cy + 5, 2.5, 0, Math.PI * 2)
-  ctx.fill()
+    agent.status === "studying" ? "#42a5f5" :
+    agent.status === "shopping" ? "#ec407a" :
+    agent.status === "socializing" ? "#ffca28" :
+    agent.status === "commuting" ? "#78909c" :
+    agent.status === "exploring" ? "#ab47bc" : "#757575"
+  if (!isSleeping) {
+    ctx.fillStyle = "#000"
+    ctx.beginPath()
+    ctx.arc(cx + size + 1, cy + size, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = sc
+    ctx.beginPath()
+    ctx.arc(cx + size + 1, cy + size, 1.8, 0, Math.PI * 2)
+    ctx.fill()
+  }
 }
 
 // ===== PHASE TINT =====
@@ -700,12 +973,14 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
     return () => observer.disconnect()
   }, [])
 
-  // Agent positions
+  // Agent positions (supports multiple agents per tile)
   const agentPositions = useMemo(() => {
-    const positions = new Map<string, { agent: Agent; index: number }>()
+    const positions = new Map<string, { agent: Agent; index: number }[]>()
     for (let i = 0; i < agents.length; i++) {
       const key = `${agents[i].position.x},${agents[i].position.y}`
-      positions.set(key, { agent: agents[i], index: i })
+      const existing = positions.get(key) ?? []
+      existing.push({ agent: agents[i], index: i })
+      positions.set(key, existing)
     }
     return positions
   }, [agents])
@@ -822,6 +1097,13 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
         else if (tile.building === "storehouse") drawStorehouse(ctx, 0, 0, wx, wy)
         else if (tile.building === "well") drawWell(ctx, 0, 0)
         else if (tile.building === "wall") drawWall(ctx, 0, 0, wx, wy)
+        else if (tile.building === "shop") drawShop(ctx, 0, 0, windowGlow, wx, wy)
+        else if (tile.building === "market") drawMarket(ctx, 0, 0, wx, wy)
+        else if (tile.building === "hospital") drawHospital(ctx, 0, 0, windowGlow)
+        else if (tile.building === "school") drawSchool(ctx, 0, 0, windowGlow)
+        else if (tile.building === "college") drawCollege(ctx, 0, 0, windowGlow)
+        else if (tile.building === "inn") drawInn(ctx, 0, 0, windowGlow, wx, wy)
+        else if (tile.building === "workshop") drawWorkshop(ctx, 0, 0, wx, wy)
 
         ctx.restore()
       }
@@ -832,17 +1114,32 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
       const wy = startWY + dy
       for (let dx = 0; dx < tilesW; dx++) {
         const wx = startWX + dx
-        const agentInfo = agentPositions.get(`${wx},${wy}`)
-        if (!agentInfo) continue
+        const agentList = agentPositions.get(`${wx},${wy}`)
+        if (!agentList || agentList.length === 0) continue
         const px = offsetPx.x + dx * cellZ
         const py = offsetPx.y + dy * cellZ
         if (px + cellZ < 0 || py + cellZ < 0 || px > cw || py > ch) continue
 
-        ctx.save()
-        ctx.translate(px, py)
-        ctx.scale(zoom, zoom)
-        drawAgent(ctx, 0, 0, agentInfo.agent, agentInfo.index, tick)
-        ctx.restore()
+        // Draw up to 3 agents per tile; offset slightly so they don't fully overlap
+        const toDraw = agentList.slice(0, 3)
+        for (let ai = 0; ai < toDraw.length; ai++) {
+          ctx.save()
+          const offsetX = ai * 4 - (toDraw.length - 1) * 2
+          const offsetY = ai * 3
+          ctx.translate(px + offsetX * zoom, py + offsetY * zoom)
+          ctx.scale(zoom, zoom)
+          drawAgent(ctx, 0, 0, toDraw[ai].agent, toDraw[ai].index, tick, zoom)
+          ctx.restore()
+        }
+
+        // If more than 3, show count
+        if (agentList.length > 3) {
+          ctx.font = `bold ${8 * zoom}px system-ui, sans-serif`
+          ctx.textAlign = "center"
+          ctx.textBaseline = "top"
+          ctx.fillStyle = "rgba(0,0,0,0.6)"
+          ctx.fillText(`+${agentList.length - 3}`, px + cellZ / 2, py + cellZ - 10 * zoom)
+        }
       }
     }
 
@@ -929,7 +1226,7 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
   const ht = hoveredTile
   const inVH = ht ? ht.x >= 0 && ht.x < MAP_SIZE && ht.y >= 0 && ht.y < MAP_SIZE : false
   const hovInfo = inVH && ht ? map[ht.y]?.[ht.x] : null
-  const hovAgent = ht ? agentPositions.get(`${ht.x},${ht.y}`) : null
+  const hovAgents = ht ? agentPositions.get(`${ht.x},${ht.y}`) : null
   const procHov = !inVH && ht ? getProceduralTile(ht.x, ht.y) : null
 
   return (
@@ -961,10 +1258,17 @@ export function MapStage({ map, agents, phase, metrics, cameraMode }: MapStagePr
               Building: <span className="text-foreground">{hovInfo.building}</span>
             </p>
           )}
-          {hovAgent && (
-            <p className="text-primary font-semibold mt-0.5">
-              {hovAgent.agent.name} ({hovAgent.agent.archetype})
-            </p>
+          {hovAgents && hovAgents.length > 0 && (
+            <div className="mt-0.5">
+              {hovAgents.slice(0, 5).map((ha) => (
+                <p key={ha.agent.id} className="text-primary font-semibold text-[10px]">
+                  {ha.agent.name} ({ha.agent.archetype}, {ha.agent.age}y) - {ha.agent.status}
+                </p>
+              ))}
+              {hovAgents.length > 5 && (
+                <p className="text-muted-foreground text-[9px]">+{hovAgents.length - 5} more</p>
+              )}
+            </div>
           )}
           <span className={`font-mono text-[9px] ${inVH ? "text-primary/50" : "text-muted-foreground/50"}`}>
             {inVH ? "Village" : "Wilderness"} [{ht.x}, {ht.y}]

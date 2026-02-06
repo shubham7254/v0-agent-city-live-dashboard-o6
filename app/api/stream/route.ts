@@ -28,6 +28,9 @@ export async function GET() {
             agents: state.agents.map((a) => ({
               id: a.id,
               name: a.name,
+              archetype: a.archetype,
+              ageGroup: (a as Record<string, unknown>).ageGroup ?? "adult",
+              age: (a as Record<string, unknown>).age ?? 30,
               status: a.status,
               energy: a.energy,
               hunger: a.hunger,
@@ -61,6 +64,9 @@ export async function GET() {
               agents: state.agents.map((a) => ({
                 id: a.id,
                 name: a.name,
+                archetype: a.archetype,
+                ageGroup: (a as Record<string, unknown>).ageGroup ?? "adult",
+                age: (a as Record<string, unknown>).age ?? 30,
                 status: a.status,
                 energy: a.energy,
                 hunger: a.hunger,

@@ -10,7 +10,8 @@ export async function POST() {
   try {
     let state = await getWorldState()
 
-    if (!state) {
+    // Re-initialize if no state or if population is outdated (migration to 50 agents)
+    if (!state || !state.agents || state.agents.length < 40 || !state.lastProcessedHour && state.lastProcessedHour !== 0) {
       state = createInitialState()
       await setWorldState(state)
       return NextResponse.json({ message: "Initialized world state", day: state.day, phase: state.phase })

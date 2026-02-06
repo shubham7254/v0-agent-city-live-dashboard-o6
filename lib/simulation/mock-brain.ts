@@ -19,6 +19,16 @@ const PROPOSAL_TEMPLATES = [
   { title: "Establish a medical herb garden", cost: 22, impacts: [{ metric: "healthRisk", direction: "down" as const, amount: 15 }] },
   { title: "Scout the eastern mountains", cost: 12, impacts: [{ metric: "morale", direction: "up" as const, amount: 5 }] },
   { title: "Build a fishing dock", cost: 20, impacts: [{ metric: "foodDays", direction: "up" as const, amount: 8 }] },
+  { title: "Expand the hospital ward", cost: 40, impacts: [{ metric: "healthRisk", direction: "down" as const, amount: 20 }] },
+  { title: "Build a new residential block", cost: 45, impacts: [{ metric: "morale", direction: "up" as const, amount: 10 }] },
+  { title: "Open a public library", cost: 30, impacts: [{ metric: "morale", direction: "up" as const, amount: 15 }] },
+  { title: "Pave the main roads with stone", cost: 35, impacts: [{ metric: "morale", direction: "up" as const, amount: 8 }] },
+  { title: "Build a playground for children", cost: 15, impacts: [{ metric: "morale", direction: "up" as const, amount: 12 }] },
+  { title: "Hire more teachers for the school", cost: 20, impacts: [{ metric: "morale", direction: "up" as const, amount: 8 }] },
+  { title: "Establish a town bakery co-op", cost: 18, impacts: [{ metric: "foodDays", direction: "up" as const, amount: 6 }] },
+  { title: "Create a town square market", cost: 25, impacts: [{ metric: "morale", direction: "up" as const, amount: 10 }] },
+  { title: "Build a sewage system", cost: 50, impacts: [{ metric: "healthRisk", direction: "down" as const, amount: 25 }] },
+  { title: "Establish a fire brigade", cost: 20, impacts: [{ metric: "fireStability", direction: "up" as const, amount: 15 }] },
 ]
 
 function dialogueForAgent(agent: Agent, context: string, state: WorldState): string {
@@ -93,6 +103,56 @@ function dialogueForAgent(agent: Agent, context: string, state: WorldState): str
       `Morale isn't just food and shelter. People need purpose, beauty, and pride.`,
       `Let me design something that serves our needs and lifts our spirits.`,
     ],
+    Doctor: [
+      `The hospital needs more supplies. ${context} could help us save lives.`,
+      `I've treated ${state.metrics.healthRisk > 30 ? "too many patients this week" : "the usual cases"}. Prevention is key.`,
+      `Public health must be our priority. Sick workers can't build or farm.`,
+      `I support anything that reduces disease and improves sanitation.`,
+    ],
+    Nurse: [
+      `The patients need our attention. ${context} affects everyone's wellbeing.`,
+      `I see the effects of poor health daily. We need better infrastructure.`,
+      `Our hospital is ${state.metrics.healthRisk > 40 ? "overwhelmed" : "managing"}, but we can always do better.`,
+    ],
+    Teacher: [
+      `The children are our future. ${context} will shape what kind of citizens they become.`,
+      `Education requires investment. A school without resources is just a room.`,
+      `I teach 8 children daily. They're bright, but they need books and tools.`,
+    ],
+    Professor: [
+      `Higher education distinguishes a village from a true civilization. ${context} is worth debating.`,
+      `My students at the college show great promise. We must nurture that.`,
+      `Research and knowledge drive progress. I support intellectual investment.`,
+    ],
+    Shopkeeper: [
+      `Trade is the lifeblood of any town. ${context} will affect commerce.`,
+      `My shop sees ${state.metrics.morale > 60 ? "good foot traffic" : "fewer customers lately"}. We need economic stability.`,
+      `The market district needs attention. Better roads mean more trade.`,
+    ],
+    Baker: [
+      `I feed this town, one loaf at a time. ${context} matters to every belly here.`,
+      `Grain supplies are ${state.metrics.foodDays > 30 ? "steady" : "worrying me"}. We need the farmers' support.`,
+    ],
+    Blacksmith: [
+      `I forge the tools that build this town. ${context} - will it need iron or steel?`,
+      `The forge runs hot. Give me materials, and I'll give you results.`,
+    ],
+    "Retired Doctor": [
+      `In my years of practice, I've learned that prevention saves more lives than cure.`,
+      `The young doctors are capable, but they lack experience. ${context} reminds me of harder times.`,
+    ],
+    "Village Historian": [
+      `Our town's history teaches us much. ${context} echoes events from 20 years ago.`,
+      `I've recorded every council decision for decades. Let us choose wisely.`,
+    ],
+    "Master Craftsman": [
+      `Quality takes time. ${context} should be done right, not fast.`,
+      `I've trained apprentices for 40 years. This town is built on craftsmanship.`,
+    ],
+    Councilmember: [
+      `As a long-serving council member, I've seen many proposals. ${context} has merit.`,
+      `The people trust us to make wise decisions. Let's not disappoint them.`,
+    ],
   }
 
   const templates = archTemplates[agent.archetype] ?? archTemplates.Farmer
@@ -144,6 +204,7 @@ function humanNewsReaction(agent: Agent, event: HumanWorldEvent, state: WorldSta
 const ACTION_TEMPLATES: Record<string, string[]> = {
   Farmer: ["Tended the southern fields", "Harvested root vegetables", "Repaired irrigation channels", "Planted new crop rows"],
   Warrior: ["Patrolled the perimeter", "Trained with the militia", "Inspected the walls", "Sharpened weapons at the forge"],
+  Guard: ["Patrolled the perimeter walls", "Manned the north watchtower", "Checked the gate locks", "Trained new recruits"],
   Scout: ["Scouted the eastern ridge", "Mapped new terrain", "Tracked animal movements", "Set trail markers"],
   Healer: ["Tended to the sick", "Gathered medicinal herbs", "Brewed healing tonics", "Checked water purity"],
   Builder: ["Reinforced shelter walls", "Repaired the watchtower", "Cut timber for construction", "Laid foundation stones"],
@@ -152,6 +213,28 @@ const ACTION_TEMPLATES: Record<string, string[]> = {
   Diplomat: ["Mediated a dispute", "Organized a community gathering", "Visited each household", "Drafted new settlement rules"],
   Elder: ["Counseled the young workers", "Shared stories at the fire", "Blessed the new buildings", "Walked the settlement grounds"],
   Artisan: ["Crafted tools at the workshop", "Decorated the council hall", "Repaired pottery and utensils", "Wove fabric for shelters"],
+  Doctor: ["Performed morning rounds", "Treated a patient with fever", "Updated medical records", "Consulted with nurses"],
+  Nurse: ["Administered medicine", "Changed bandages", "Monitored patient vitals", "Prepared medical supplies"],
+  Teacher: ["Taught a reading lesson", "Graded student work", "Prepared tomorrow's lesson plan", "Held parent-teacher meeting"],
+  Professor: ["Gave a lecture on engineering", "Supervised student research", "Graded term papers", "Met with college administration"],
+  Shopkeeper: ["Opened shop for business", "Restocked shelves", "Served customers all day", "Counted the day's earnings"],
+  Baker: ["Baked bread before dawn", "Made pastries for the market", "Restocked flour supplies", "Experimented with new recipes"],
+  Blacksmith: ["Forged new tools", "Repaired farming equipment", "Hammered horseshoes", "Sharpened knives and axes"],
+  Merchant: ["Traded goods at market", "Negotiated with suppliers", "Balanced the ledger", "Sourced new merchandise"],
+  Carpenter: ["Built new shelving", "Repaired a broken door", "Carved furniture pieces", "Installed window frames"],
+  Librarian: ["Organized the book collection", "Helped students research", "Cataloged new arrivals", "Read stories to children"],
+  Cook: ["Prepared meals for the inn", "Sourced fresh ingredients", "Tried a new recipe", "Fed the workers at noon"],
+  Tailor: ["Sewed new garments", "Mended torn clothing", "Measured a customer for a suit", "Dyed fabric at the workshop"],
+  Herbalist: ["Gathered wild herbs", "Prepared tinctures", "Dried flowers for medicine", "Advised patients on remedies"],
+  Fisher: ["Cast nets in the river", "Cleaned the day's catch", "Repaired fishing nets", "Smoked fish for preservation"],
+  Mason: ["Laid bricks for the new wall", "Mixed mortar", "Repaired the market floor", "Carved stone blocks"],
+  Schoolchild: ["Attended class", "Played with friends at recess", "Did homework", "Helped the teacher clean up"],
+  Student: ["Attended lectures", "Studied in the library", "Worked on a group project", "Practiced writing an essay"],
+  Apprentice: ["Assisted the master craftsman", "Practiced basic skills", "Ran errands for the workshop", "Studied trade manuals"],
+  "Retired Doctor": ["Advised the hospital staff", "Took a gentle walk", "Read medical journals", "Mentored a young nurse"],
+  "Village Historian": ["Updated the town chronicle", "Interviewed an elder", "Organized historical records", "Gave a public talk"],
+  "Master Craftsman": ["Supervised apprentice work", "Crafted a fine piece", "Inspected workshop standards", "Taught advanced techniques"],
+  Councilmember: ["Reviewed town proposals", "Met with concerned citizens", "Inspected public buildings", "Drafted new town policies"],
 }
 
 function seededRandom(seed: number): number {
