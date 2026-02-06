@@ -76,7 +76,7 @@ export default function LivePage() {
       if (state && !state.paused) {
         triggerTick()
       }
-    }, 30000) // 30s polling to stay responsive to real hour changes
+    }, 15000) // 15s polling for lively updates
     return () => clearInterval(interval)
   }, [state, triggerTick])
 
@@ -365,6 +365,56 @@ export default function LivePage() {
               <Sparkline data={unrestHistory} color="hsl(var(--live-red))" label="UNR" />
             </div>
           </div>
+
+          {/* Live event feed (floating on bottom-left) */}
+          {state.recentEvents.length > 0 && (
+            <div className="absolute bottom-4 left-4 z-20 w-80 max-h-[200px] overflow-hidden pointer-events-none">
+              <div className="space-y-1">
+                <AnimatePresence initial={false}>
+                  {state.recentEvents.slice(0, 6).map((evt, i) => {
+                    const isAmbient = evt.type === "ambient"
+                    const isHighSeverity = evt.severity === "high"
+                    const involvedNames = evt.involvedAgents
+                      ?.map((aid: string) => state.agents.find((a) => a.id === aid)?.name)
+                      .filter(Boolean)
+                      .join(", ")
+                    return (
+                      <motion.div
+                        key={evt.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1 - i * 0.12, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={{ duration: 0.3 }}
+                        className={`glass-panel rounded-md px-3 py-1.5 pointer-events-auto ${
+                          isHighSeverity ? "border-[hsl(var(--live-red)/.4)]" : ""
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className={`mt-0.5 shrink-0 h-1.5 w-1.5 rounded-full ${
+                            isHighSeverity ? "bg-[hsl(var(--live-red))]" :
+                            isAmbient ? "bg-muted-foreground/50" :
+                            "bg-primary/70"
+                          }`} />
+                          <div className="min-w-0">
+                            <p className={`text-[11px] leading-tight ${
+                              isAmbient ? "text-muted-foreground italic" : "text-foreground"
+                            }`}>
+                              {evt.description}
+                            </p>
+                            {involvedNames && (
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {involvedNames}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </motion.div>
+                    )
+                  })}
+                </AnimatePresence>
+              </div>
+            </div>
+          )}
 
           {/* Council button when there's dialogue */}
           {state.council.dialogue.length > 0 && !councilOpen && (

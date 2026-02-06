@@ -364,73 +364,312 @@ function runNightHour(state: WorldState, hour: number): { events: WorldEvent[]; 
   const news: NewsItem[] = []
   let chronicle: ChronicleEntry | undefined
 
-  // Assign watchers/sleepers at 22:00
+  // ── 22:00 - Night shift begins ──
   if (hour === 22) {
     const watchers = state.agents.filter((a) => a.archetype === "Warrior" || a.archetype === "Scout")
+    const campfireGroup = state.agents.filter((a) => a.archetype === "Elder" || a.archetype === "Scholar" || a.archetype === "Artisan")
+    const nightWorkers = state.agents.filter((a) => a.archetype === "Healer" || a.archetype === "Builder")
+
     for (const agent of state.agents) {
       if (watchers.includes(agent)) {
         agent.status = "on_watch"
+      } else if (campfireGroup.includes(agent)) {
+        agent.status = "idle" // at campfire
+      } else if (nightWorkers.includes(agent)) {
+        agent.status = "working" // night repairs/medicine
       } else {
         agent.status = "sleeping"
       }
     }
-  }
 
-  // Passive effects each night hour
-  for (const agent of state.agents) {
-    if (agent.status === "sleeping") {
-      agent.energy = clamp(agent.energy + 4, 0, 100)
-      agent.stress = clamp(agent.stress - 2, 0, 100)
-      agent.hunger = clamp(agent.hunger - 1, 0, 100)
-    } else if (agent.status === "on_watch") {
-      agent.energy = clamp(agent.energy - 2, 0, 100)
-    }
-  }
-
-  // Night random events
-  if (Math.random() < 0.06) {
-    const nightEvents = [
-      { type: "strange_noise", desc: `Strange noises echo from the mountains at ${formatHour(hour)}`, severity: "low" as const },
-      { type: "night_raid", desc: `Wild animals raid the food stores around ${formatHour(hour)}!`, severity: "high" as const },
-      { type: "meteor_shower", desc: "A meteor shower lights up the sky", severity: "low" as const },
-      { type: "flooding", desc: "Heavy rain causes minor flooding", severity: "medium" as const },
-    ]
-    const e = randomPick(nightEvents)
-    const watchers = state.agents.filter(a => a.status === "on_watch")
-    events.push({
-      id: `evt-${uid()}`,
-      type: e.type,
-      description: e.desc,
-      severity: e.severity,
-      day: state.day,
-      phase: "night",
-      timestamp: Date.now(),
-      involvedAgents: watchers.map((w) => w.id),
-    })
-
-    if (e.type === "night_raid") {
-      state.metrics.foodDays = clamp(state.metrics.foodDays - 6, 0, 200)
-      state.metrics.unrest = clamp(state.metrics.unrest + 8, 0, 100)
-    }
-    if (e.type === "flooding") {
-      state.metrics.waterDays = clamp(state.metrics.waterDays + 5, 0, 200)
-      state.metrics.healthRisk = clamp(state.metrics.healthRisk + 5, 0, 100)
-    }
-  }
-
-  // End-of-day at hour 4 (before dawn)
-  if (hour === 4) {
     news.push({
       id: `news-${uid()}`,
-      headline: `Night ${state.day} recap`,
-      body: `The settlement rests. Watchers report ${Math.random() > 0.5 ? "a quiet night" : "some disturbances"}.`,
+      headline: "Night falls over the settlement",
+      body: `${watchers.length} sentries take their posts on the watchtowers. ${campfireGroup.length} settlers gather around the campfire. ${nightWorkers.length} continue essential work by lantern light.`,
+      category: "night_update",
+      severity: "low",
+      day: state.day,
+      timestamp: Date.now(),
+    })
+  }
+
+  // ── Campfire stories (23:00) ──
+  if (hour === 23) {
+    const storytellers = state.agents.filter((a) => a.archetype === "Elder" || a.archetype === "Scholar")
+    if (storytellers.length > 0) {
+      const teller = randomPick(storytellers)
+      const stories = [
+        `${teller.name} tells the tale of the first settlers who crossed the mountains in winter.`,
+        `${teller.name} recounts the legend of the River Spirit who protected the ancient village.`,
+        `${teller.name} shares memories of a great harvest festival from years past, when the fields were golden.`,
+        `${teller.name} warns of the "Hollow Season" - a famine from long ago that nearly ended everything.`,
+        `${teller.name} speaks of distant lands across the ocean, where cities shine like stars.`,
+        `${teller.name} tells a story about a scout who discovered a hidden valley filled with medicinal herbs.`,
+      ]
+      events.push({
+        id: `evt-${uid()}`,
+        type: "campfire_story",
+        description: randomPick(stories),
+        severity: "low",
+        position: { x: 31, y: 31 },
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: [teller.id],
+      })
+      state.metrics.morale = clamp(state.metrics.morale + 2, 0, 100)
+
+      // Listeners react
+      const listeners = state.agents.filter((a) => a.id !== teller.id && a.status !== "sleeping")
+      if (listeners.length > 0) {
+        const reactor = randomPick(listeners)
+        const reactions = [
+          `${reactor.name} nods thoughtfully, gazing into the embers.`,
+          `${reactor.name} asks "${teller.name}, do you think that could happen here?"`,
+          `${reactor.name} smiles and adds their own memory to the tale.`,
+          `${reactor.name} looks troubled, connecting the story to their current worries.`,
+        ]
+        events.push({
+          id: `evt-${uid()}`,
+          type: "campfire_reaction",
+          description: randomPick(reactions),
+          severity: "low",
+          position: { x: 31, y: 31 },
+          day: state.day,
+          phase: "night",
+          timestamp: Date.now(),
+          involvedAgents: [reactor.id],
+        })
+      }
+    }
+  }
+
+  // ── Midnight (00:00) - Deepest night ──
+  if (hour === 0) {
+    // Night patrol reports
+    const watchers = state.agents.filter((a) => a.status === "on_watch")
+    if (watchers.length > 0) {
+      const sentry = randomPick(watchers)
+      const patrols = [
+        `${sentry.name} reports movement in the treeline. Likely deer, but they remain vigilant.`,
+        `${sentry.name} spots distant lights on the horizon. Campfires? Travelers? Unknown.`,
+        `${sentry.name} hears wolves howling to the north. The pack seems closer than last night.`,
+        `${sentry.name} reports all clear from the eastern watchtower. Stars are bright tonight.`,
+        `${sentry.name} notices the river level has ${Math.random() > 0.5 ? "risen" : "dropped"} since evening.`,
+        `${sentry.name} spots an owl hunting near the granary. A good omen, they say.`,
+      ]
+      events.push({
+        id: `evt-${uid()}`,
+        type: "night_patrol",
+        description: randomPick(patrols),
+        severity: "low",
+        position: sentry.position,
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: [sentry.id],
+      })
+    }
+
+    // Midnight weather shift
+    if (Math.random() < 0.25) {
+      const oldWeather = state.weather
+      state.weather = randomPick(WEATHERS)
+      if (oldWeather !== state.weather) {
+        events.push({
+          id: `evt-${uid()}`,
+          type: "weather_change",
+          description: `The weather shifts at midnight. ${state.weather === "rain" ? "Rain begins to fall softly on the rooftops." : state.weather === "storm" ? "Thunder rumbles in the distance as a storm approaches." : state.weather === "fog" ? "A thick fog rolls in from the river." : state.weather === "clear" ? "The clouds part, revealing a brilliant starry sky." : "A warm front pushes through the valley."}`,
+          severity: state.weather === "storm" ? "medium" : "low",
+          day: state.day,
+          phase: "night",
+          timestamp: Date.now(),
+          involvedAgents: [],
+        })
+      }
+    }
+  }
+
+  // ── 1:00 AM - Night workers and dreams ──
+  if (hour === 1) {
+    // Healer night rounds
+    const healers = state.agents.filter((a) => a.archetype === "Healer")
+    if (healers.length > 0) {
+      const healer = randomPick(healers)
+      const rounds = [
+        `${healer.name} makes night rounds, checking on settlers with fevers.`,
+        `${healer.name} brews a remedy by candlelight. The herbs smell of lavender and eucalyptus.`,
+        `${healer.name} sits by a sick child's bedside, applying cool compresses.`,
+        `${healer.name} records health observations by lamplight: "${state.metrics.healthRisk > 30 ? "Cases rising. Need more supplies." : "Settlement health is stable. Continue preventive measures."}"`,
+      ]
+      events.push({
+        id: `evt-${uid()}`,
+        type: "night_work",
+        description: randomPick(rounds),
+        severity: "low",
+        position: healer.position,
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: [healer.id],
+      })
+    }
+
+    // Sleeper dreams
+    const sleepers = state.agents.filter((a) => a.status === "sleeping")
+    if (sleepers.length > 0) {
+      const dreamer = randomPick(sleepers)
+      const dreams = [
+        `${dreamer.name} murmurs in their sleep, dreaming of ${dreamer.archetype === "Farmer" ? "endless golden fields" : dreamer.archetype === "Warrior" ? "battles yet to come" : dreamer.archetype === "Scout" ? "uncharted territories" : "their life before the settlement"}.`,
+        `${dreamer.name} tosses restlessly. ${dreamer.stress > 50 ? "The weight of recent events haunts their dreams." : "Tomorrow's plans fill their sleeping mind."}`,
+        `${dreamer.name} sleeps peacefully, a rare smile crossing their face.`,
+      ]
+      events.push({
+        id: `evt-${uid()}`,
+        type: "dream",
+        description: randomPick(dreams),
+        severity: "low",
+        position: dreamer.position,
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: [dreamer.id],
+      })
+    }
+  }
+
+  // ── 2:00 AM - Deep night encounters ──
+  if (hour === 2) {
+    const encounterRoll = Math.random()
+    if (encounterRoll < 0.35) {
+      const encounters = [
+        { type: "night_raid", desc: `Wild animals raid the food stores! A fox slips through the fence near the granary.`, severity: "high" as const, foodLoss: 6, unrest: 8 },
+        { type: "strange_lights", desc: "Strange lights appear over the eastern mountains. The sentries watch in silence.", severity: "medium" as const, foodLoss: 0, unrest: 3 },
+        { type: "night_visitor", desc: "A lone figure approaches the settlement gate. The watchers call for identification.", severity: "medium" as const, foodLoss: 0, unrest: 2 },
+        { type: "wildlife_encounter", desc: "A family of deer wanders through the settlement, grazing on garden plants.", severity: "low" as const, foodLoss: 2, unrest: 0 },
+        { type: "night_construction", desc: "A builder who couldn't sleep makes repairs to the south wall by moonlight.", severity: "low" as const, foodLoss: 0, unrest: 0 },
+        { type: "meteor_shower", desc: "A brilliant meteor streaks across the sky. Watchers pause to make wishes.", severity: "low" as const, foodLoss: 0, unrest: 0 },
+      ]
+      const e = randomPick(encounters)
+      const involved = state.agents.filter((a) => a.status === "on_watch")
+      events.push({
+        id: `evt-${uid()}`,
+        type: e.type,
+        description: e.desc,
+        severity: e.severity,
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: involved.map((a) => a.id),
+      })
+
+      if (e.foodLoss > 0) state.metrics.foodDays = clamp(state.metrics.foodDays - e.foodLoss, 0, 200)
+      if (e.unrest > 0) state.metrics.unrest = clamp(state.metrics.unrest + e.unrest, 0, 100)
+
+      if (e.severity === "high") {
+        news.push({
+          id: `news-${uid()}`,
+          headline: e.desc.slice(0, 80),
+          body: `Night sentries responded to the incident at ${formatHour(hour)}. The settlement is on alert.`,
+          category: "breaking",
+          severity: "high",
+          day: state.day,
+          timestamp: Date.now(),
+        })
+        // Wake some agents
+        for (const agent of state.agents.filter((a) => a.status === "sleeping").slice(0, 3)) {
+          agent.status = "idle"
+          agent.energy = clamp(agent.energy - 10, 0, 100)
+          agent.stress = clamp(agent.stress + 10, 0, 100)
+        }
+      }
+    }
+  }
+
+  // ── 3:00 AM - The quiet hour ──
+  if (hour === 3) {
+    const watchers = state.agents.filter((a) => a.status === "on_watch")
+    if (watchers.length > 0) {
+      const sentry = randomPick(watchers)
+      const thoughts = [
+        `${sentry.name} stands alone on the watchtower, contemplating the settlement's future.`,
+        `${sentry.name} marks another hour on the watch log. Dawn is still far away.`,
+        `${sentry.name} shares a flask of warm broth with a fellow sentry. Small comforts matter.`,
+        `${sentry.name} notices the ${state.weather === "clear" ? "first hints of dawn on the eastern horizon" : state.weather === "rain" ? "rain intensifying as the night deepens" : "fog thickening around the watchtowers"}.`,
+      ]
+      events.push({
+        id: `evt-${uid()}`,
+        type: "night_watch_log",
+        description: randomPick(thoughts),
+        severity: "low",
+        position: sentry.position,
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: [sentry.id],
+      })
+    }
+
+    // Relationship building during shared watch
+    if (watchers.length >= 2) {
+      const pair = watchers.sort(() => Math.random() - 0.5).slice(0, 2)
+      const convos = [
+        `${pair[0].name} and ${pair[1].name} share quiet conversation on the night watch, strengthening their bond.`,
+        `${pair[0].name} teaches ${pair[1].name} to read the stars for navigation.`,
+        `${pair[0].name} and ${pair[1].name} debate whether the settlement should expand east or north.`,
+      ]
+      events.push({
+        id: `evt-${uid()}`,
+        type: "night_bonding",
+        description: randomPick(convos),
+        severity: "low",
+        position: pair[0].position,
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: pair.map((a) => a.id),
+      })
+      // Improve relationship
+      if (!pair[0].allies.includes(pair[1].id)) {
+        if (Math.random() < 0.3) {
+          pair[0].allies = [...pair[0].allies, pair[1].id].slice(0, 5)
+          pair[1].allies = [...pair[1].allies, pair[0].id].slice(0, 5)
+        }
+      }
+    }
+  }
+
+  // ── 4:00 AM - Pre-dawn, end of day ──
+  if (hour === 4) {
+    // Pre-dawn awakening
+    const earlyRisers = state.agents.filter((a) => a.archetype === "Farmer" || a.archetype === "Hunter")
+    for (const agent of earlyRisers) {
+      agent.status = "idle"
+    }
+    if (earlyRisers.length > 0) {
+      events.push({
+        id: `evt-${uid()}`,
+        type: "pre_dawn",
+        description: `${earlyRisers.map((a) => a.name).join(" and ")} rise before dawn to prepare for the day ahead.`,
+        severity: "low",
+        day: state.day,
+        phase: "night",
+        timestamp: Date.now(),
+        involvedAgents: earlyRisers.map((a) => a.id),
+      })
+    }
+
+    news.push({
+      id: `news-${uid()}`,
+      headline: `Night ${state.day} report`,
+      body: `The long night ends. Watchers report ${state.recentEvents.filter((e) => e.phase === "night" && e.day === state.day).length} events overnight. Settlement status: morale ${state.metrics.morale}%, food ${state.metrics.foodDays.toFixed(0)} days, unrest ${state.metrics.unrest}%.`,
       category: "night_recap",
       severity: "low",
       day: state.day,
       timestamp: Date.now(),
     })
 
-    // Weather change chance
+    // Weather change chance at pre-dawn
     if (Math.random() < 0.3) {
       state.weather = randomPick(WEATHERS)
     }
@@ -461,6 +700,74 @@ function runNightHour(state: WorldState, hour: number): { events: WorldEvent[]; 
       metricsSnapshot: { ...state.metrics },
       timestamp: Date.now(),
     }
+  }
+
+  // ── Passive effects every night hour ──
+  for (const agent of state.agents) {
+    if (agent.status === "sleeping") {
+      agent.energy = clamp(agent.energy + 4, 0, 100)
+      agent.stress = clamp(agent.stress - 2, 0, 100)
+      agent.hunger = clamp(agent.hunger - 1, 0, 100)
+    } else if (agent.status === "on_watch") {
+      agent.energy = clamp(agent.energy - 2, 0, 100)
+      agent.stress = clamp(agent.stress + 1, 0, 100)
+    } else if (agent.status === "working") {
+      agent.energy = clamp(agent.energy - 1, 0, 100)
+    }
+    // Slight night movement for non-sleepers
+    if (agent.status !== "sleeping" && Math.random() < 0.3) {
+      agent.position = {
+        x: clamp(agent.position.x + Math.floor(Math.random() * 3 - 1), 1, 58),
+        y: clamp(agent.position.y + Math.floor(Math.random() * 3 - 1), 1, 58),
+      }
+    }
+  }
+
+  // ── Ambient event every tick (regardless of hour) - weather-dependent ──
+  if (Math.random() < 0.4) {
+    const weatherAmbient: Record<string, string[]> = {
+      clear: [
+        "The stars wheel slowly overhead. The Milky Way stretches from horizon to horizon.",
+        "Crickets chirp steadily. An owl calls from the ancient oak near the council hall.",
+        "The moonlight casts long shadows across the settlement paths.",
+        "Fireflies dance near the river, their tiny lights mirroring the stars above.",
+      ],
+      rain: [
+        "Rain drums steadily on the rooftops. Puddles form along the main path.",
+        "The sound of rain creates a soothing rhythm. Water barrels slowly fill.",
+        "Lightning flickers in the distance, briefly illuminating the landscape.",
+        "The river swells with rainwater. Its rushing sound fills the night air.",
+      ],
+      storm: [
+        "Thunder cracks overhead. The watchtowers groan in the wind.",
+        "A fierce gust tears a tarp from the storehouse. Supplies scatter.",
+        "Lightning strikes a tree near the perimeter. The sentries shout warnings.",
+        "The storm howls around the settlement walls. Everyone huddles close.",
+      ],
+      fog: [
+        "Thick fog blankets everything. Watchers can barely see past the gate.",
+        "The fog muffles all sound. The settlement feels suspended in silence.",
+        "Shapes move in the fog - trees? Animals? The sentries grip their weapons tighter.",
+        "Lanterns glow like ghostly orbs in the dense mist.",
+      ],
+      heat: [
+        "The night air remains warm and heavy. Few can sleep comfortably.",
+        "Heat lightning flickers silently on the horizon.",
+        "The warm breeze carries the scent of dry grass and distant wildflowers.",
+        "Even at night, the heat persists. Water consumption rises.",
+      ],
+    }
+    const ambients = weatherAmbient[state.weather] ?? weatherAmbient.clear
+    events.push({
+      id: `evt-${uid()}`,
+      type: "ambient",
+      description: randomPick(ambients),
+      severity: "low",
+      day: state.day,
+      phase: "night",
+      timestamp: Date.now(),
+      involvedAgents: [],
+    })
   }
 
   return { events, news, chronicle }
