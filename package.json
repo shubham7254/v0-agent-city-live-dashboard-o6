@@ -9,12 +9,14 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "@react-three/drei": "^10.0.0",
-    "@react-three/fiber": "^9.1.0",
+    "@react-three/drei": "9.121.5",
+    "@react-three/fiber": "8.17.14",
+    "@react-three/postprocessing": "2.16.3",
     "@upstash/redis": "^1.34.3",
     "framer-motion": "^11.15.0",
+    "postprocessing": "6.36.4",
     "swr": "^2.2.5",
-    "three": "^0.172.0",
+    "three": "0.171.0",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -67,7 +69,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",
-    "@types/three": "^0.172.0",
+    "@types/three": "0.171.0",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
