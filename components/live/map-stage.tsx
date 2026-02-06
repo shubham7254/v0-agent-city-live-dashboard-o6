@@ -1,10 +1,14 @@
 "use client"
 
+console.log("[v0] map-stage.tsx module loading...")
+
 import { useRef, useMemo, useEffect } from "react"
 import { Canvas, useFrame } from "@react-three/fiber"
 import { OrthographicCamera, Environment, OrbitControls, ContactShadows } from "@react-three/drei"
 import * as THREE from "three"
 import type { Agent, MapTile, Phase, WorldMetrics, CameraMode } from "@/lib/types"
+
+console.log("[v0] map-stage.tsx imports resolved successfully")
 
 // ─── CONSTANTS ────────────────────────────────────
 const MAP_SIZE = 60

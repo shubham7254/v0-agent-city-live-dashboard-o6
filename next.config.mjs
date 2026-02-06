@@ -6,6 +6,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  transpilePackages: ["three", "@react-three/fiber", "@react-three/drei"],
 }
 
 export default nextConfig
