@@ -12,11 +12,12 @@ const MapStage = dynamic(
   { ssr: false, loading: () => <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">Loading 3D world...</div> }
 )
 import { AgentRail } from "@/components/live/agent-rail"
+import { AgentProfilePanel } from "@/components/live/agent-profile-panel"
 import { CouncilChamber } from "@/components/live/council-chamber"
 import { NewsModules } from "@/components/live/news-modules"
 import { Sparkline } from "@/components/live/sparkline"
 import { Button } from "@/components/ui/button"
-import type { CameraMode } from "@/lib/types"
+import type { Agent, CameraMode } from "@/lib/types"
 
 const CAMERA_MODES: { value: CameraMode; label: string }[] = [
   { value: "wide", label: "Wide View" },
@@ -57,6 +58,19 @@ export default function LivePage() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [councilOpen, setCouncilOpen] = useState(false)
   const [realClock, setRealClock] = useState(formatRealTime())
+  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
+
+  const handleAgentClick = useCallback((agentId: string) => {
+    if (!state) return
+    const agent = state.agents.find((a) => a.id === agentId || a.name === agentId)
+    if (agent) setSelectedAgent(agent)
+  }, [state])
+
+  // Keep selectedAgent data fresh when state updates
+  const liveSelectedAgent = useMemo(() => {
+    if (!selectedAgent || !state) return null
+    return state.agents.find((a) => a.id === selectedAgent.id) ?? selectedAgent
+  }, [selectedAgent, state])
 
   // Update real clock every second
   useEffect(() => {
@@ -273,7 +287,7 @@ export default function LivePage() {
                 </button>
               </div>
               <div className="p-2">
-                <AgentRail agents={state.agents} />
+                <AgentRail agents={state.agents} onAgentClick={handleAgentClick} />
               </div>
             </motion.div>
           )}
@@ -438,6 +452,18 @@ export default function LivePage() {
             </button>
           )}
 
+          {/* Agent profile panel */}
+          <AnimatePresence>
+            {liveSelectedAgent && (
+              <AgentProfilePanel
+                agent={liveSelectedAgent}
+                allAgents={state.agents}
+                onClose={() => setSelectedAgent(null)}
+                onSelectAgent={(a) => setSelectedAgent(a)}
+              />
+            )}
+          </AnimatePresence>
+
           {/* Map fills entire area */}
           <MapStage
             map={state.map}
@@ -445,6 +471,7 @@ export default function LivePage() {
             phase={state.phase}
             metrics={liveMetrics}
             cameraMode={cameraMode}
+            onAgentClick={handleAgentClick}
           />
         </div>
       </div>

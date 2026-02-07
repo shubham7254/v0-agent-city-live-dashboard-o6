@@ -128,6 +128,9 @@ function createAgent(id: number, ageGroup: AgeGroup): Agent {
     voteHistory: [],
     allies: [],
     rivals: [],
+    relationships: [],
+    storyLog: [],
+    moodHistory: [70 + Math.floor(Math.random() * 20)],
   }
 }
 
@@ -345,6 +348,7 @@ export function createInitialState(): WorldState {
       { headline: "Global food supply chain disruptions", source: "Reuters", simEffect: { variable: "foodDays", modifier: -4, description: "Resource scarcity" } },
     ],
     recentEvents: [],
+    storyLog: [],
     weather: "clear",
     startedAt: now,
     lastTickAt: now,

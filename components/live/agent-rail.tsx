@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface AgentRailProps {
   agents: Agent[]
+  onAgentClick?: (agentId: string) => void
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -184,7 +185,7 @@ function AgentDrawer({ agent, onClose }: { agent: Agent; onClose: () => void }) 
   )
 }
 
-export function AgentRail({ agents }: AgentRailProps) {
+export function AgentRail({ agents, onAgentClick }: AgentRailProps) {
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
 
   return (
@@ -198,7 +199,10 @@ export function AgentRail({ agents }: AgentRailProps) {
       <ScrollArea className="flex-1">
         <div className="flex flex-col gap-2 p-2">
           {agents.map((agent) => (
-            <AgentChip key={agent.id} agent={agent} onClick={() => setSelectedAgent(agent)} />
+            <AgentChip key={agent.id} agent={agent} onClick={() => {
+              if (onAgentClick) onAgentClick(agent.id)
+              else setSelectedAgent(agent)
+            }} />
           ))}
         </div>
       </ScrollArea>

@@ -5,10 +5,12 @@ import type {
   NewsItem,
   Phase,
   Proposal,
+  StoryEvent,
   WorldEvent,
   WorldState,
 } from "../types"
 import { MockBrain } from "./mock-brain"
+import { runStoryEngine } from "./story-engine"
 
 const brain = new MockBrain()
 const WEATHERS: WorldState["weather"][] = ["clear", "rain", "storm", "fog", "heat"]
@@ -597,6 +599,7 @@ export interface TickResult {
   state: WorldState
   events: WorldEvent[]
   news: NewsItem[]
+  stories: StoryEvent[]
   chronicle?: ChronicleEntry
 }
 
@@ -658,13 +661,35 @@ export function executeTick(state: WorldState): TickResult {
   // Generate time-appropriate events every tick
   const tickEvents = generateTimeAppropriateEvents(s)
 
+  // Run story engine for narrative events (relationships, romance, business, etc.)
+  const stories = runStoryEngine(s)
+
+  // Convert stories into visible events too
+  for (const story of stories) {
+    const involvedAgent = s.agents.find((a) => a.id === story.involvedAgents[0])
+    tickEvents.push({
+      id: story.id,
+      type: `story_${story.category}`,
+      description: story.title,
+      severity: story.category === "rivalry" || story.category === "misfortune" ? "medium" : "low",
+      position: involvedAgent?.position,
+      day: s.day,
+      phase: s.phase,
+      timestamp: story.timestamp,
+      involvedAgents: story.involvedAgents,
+    })
+  }
+
+  // Add stories to global story log
+  s.storyLog = [...stories, ...(s.storyLog ?? [])].slice(0, 100)
+
   const allEvents = [...hourEvents, ...tickEvents]
   const allNews = [...hourNews]
 
   s.recentEvents = [...allEvents, ...s.recentEvents].slice(0, 50)
   s.news = [...allNews, ...s.news].slice(0, 50)
 
-  return { state: s, events: allEvents, news: allNews, chronicle }
+  return { state: s, events: allEvents, news: allNews, stories, chronicle }
 }
 
 function generateMorningHeadline(state: WorldState): string {

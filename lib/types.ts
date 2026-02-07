@@ -11,6 +11,26 @@ export type CameraMode = "follow_events" | "free" | "wide"
 export type VoteChoice = "yes" | "no" | "abstain"
 export type AgeGroup = "child" | "teen" | "adult" | "elder"
 
+export type StoryCategory = "romance" | "rivalry" | "business" | "achievement" | "misfortune" | "friendship" | "conflict" | "discovery" | "celebration"
+
+export interface StoryEvent {
+  id: string
+  day: number
+  hour: number
+  category: StoryCategory
+  title: string
+  description: string
+  involvedAgents: string[]
+  consequence?: string
+  timestamp: number
+}
+
+export interface RelationshipEdge {
+  targetId: string
+  score: number // -100 (bitter enemies) to 100 (soulmates)
+  history: string[] // short descriptions of shared events
+}
+
 export interface Position {
   x: number
   y: number
@@ -62,6 +82,9 @@ export interface Agent {
   voteHistory: VoteChoice[]
   allies: string[]
   rivals: string[]
+  relationships: RelationshipEdge[]
+  storyLog: StoryEvent[]
+  moodHistory: number[] // track stress snapshots over time
 }
 
 export interface Proposal {
@@ -149,6 +172,7 @@ export interface WorldState {
   news: NewsItem[]
   humanEvents: HumanWorldEvent[]
   recentEvents: WorldEvent[]
+  storyLog: StoryEvent[]
   weather: "clear" | "rain" | "storm" | "fog" | "heat"
   startedAt: number
   lastTickAt: number

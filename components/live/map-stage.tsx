@@ -71,9 +71,10 @@ interface MapStageProps {
   phase: Phase
   metrics: WorldMetrics | null
   cameraMode: CameraMode
+  onAgentClick?: (agentId: string) => void
 }
 
-export function MapStage({ map, agents, phase }: MapStageProps) {
+export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sceneRef = useRef<{
     renderer: THREE.WebGLRenderer
@@ -101,6 +102,8 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
   phaseRef.current = phase
   const agentsRef = useRef(agents)
   agentsRef.current = agents
+  const onAgentClickRef = useRef(onAgentClick)
+  onAgentClickRef.current = onAgentClick
 
   // Build scene once
   useEffect(() => {
@@ -674,9 +677,10 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       head.position.y = 0.1
       head.castShadow = true
       ag.add(head)
-      scene.add(ag)
-      agentMeshes.set(agent.id, ag)
-      return ag
+  ag.userData = { agentId: agent.id }
+  scene.add(ag)
+  agentMeshes.set(agent.id, ag)
+  return ag
     }
 
     // ─── ORBIT CONTROLS (manual) ───
@@ -737,6 +741,62 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
     domEl.addEventListener("pointerleave", onPointerUp)
     domEl.addEventListener("wheel", onWheel, { passive: false })
     domEl.addEventListener("contextmenu", onContextMenu)
+
+  // Agent click detection via raycasting
+  const raycaster = new THREE.Raycaster()
+  const clickMouse = new THREE.Vector2()
+  let clickStart = { x: 0, y: 0 }
+  domEl.addEventListener("pointerdown", (e) => { clickStart = { x: e.clientX, y: e.clientY } })
+  const onClickForAgent = (e: MouseEvent) => {
+    // Only trigger on short clicks (not drags)
+    const dx = e.clientX - clickStart.x
+    const dy = e.clientY - clickStart.y
+    if (Math.sqrt(dx * dx + dy * dy) > 5) return
+    if (!onAgentClickRef.current) return
+
+    const rect = domEl.getBoundingClientRect()
+    clickMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+    clickMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(clickMouse, camera)
+
+    // Check intersections with agent meshes
+    const agentMeshArray = Array.from(agentMeshes.values())
+    const allChildren: THREE.Object3D[] = []
+    for (const grp of agentMeshArray) {
+      grp.traverse((child) => allChildren.push(child))
+    }
+    const intersects = raycaster.intersectObjects(allChildren, false)
+    if (intersects.length > 0) {
+      // Walk up to find the agent group
+      let obj: THREE.Object3D | null = intersects[0].object
+      while (obj) {
+        if (obj.userData?.agentId) {
+          onAgentClickRef.current(obj.userData.agentId)
+          return
+        }
+        obj = obj.parent
+      }
+    }
+  }
+  domEl.addEventListener("click", onClickForAgent)
+
+  // Cursor hover detection for agents
+  const hoverMouse = new THREE.Vector2()
+  const hoverRay = new THREE.Raycaster()
+  const onHoverCheck = (e: MouseEvent) => {
+    const rect = domEl.getBoundingClientRect()
+    hoverMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+    hoverMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+    hoverRay.setFromCamera(hoverMouse, camera)
+    const agentMeshArray = Array.from(agentMeshes.values())
+    const allChildren: THREE.Object3D[] = []
+    for (const grp of agentMeshArray) {
+      grp.traverse((child) => allChildren.push(child))
+    }
+    const intersects = hoverRay.intersectObjects(allChildren, false)
+    domEl.style.cursor = intersects.length > 0 ? "pointer" : ""
+  }
+  domEl.addEventListener("mousemove", onHoverCheck)
 
     // ─── RESIZE ───
     const onResize = () => {
@@ -870,8 +930,10 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       domEl.removeEventListener("pointerup", onPointerUp)
       domEl.removeEventListener("pointerleave", onPointerUp)
       domEl.removeEventListener("wheel", onWheel)
-      domEl.removeEventListener("contextmenu", onContextMenu)
-      renderer.dispose()
+  domEl.removeEventListener("contextmenu", onContextMenu)
+  domEl.removeEventListener("click", onClickForAgent)
+  domEl.removeEventListener("mousemove", onHoverCheck)
+  renderer.dispose()
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement)
     }
   }, [map])
