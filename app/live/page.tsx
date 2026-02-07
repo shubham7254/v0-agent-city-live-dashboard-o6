@@ -16,6 +16,9 @@ import { AgentProfilePanel } from "@/components/live/agent-profile-panel"
 import { CouncilChamber } from "@/components/live/council-chamber"
 import { NewsModules } from "@/components/live/news-modules"
 import { Sparkline } from "@/components/live/sparkline"
+import { SpectatorBar } from "@/components/live/spectator-bar"
+import { AmbientSound } from "@/components/live/ambient-sound"
+import { DailyNewspaper } from "@/components/live/daily-newspaper"
 import { Button } from "@/components/ui/button"
 import type { Agent, CameraMode } from "@/lib/types"
 
@@ -366,6 +369,7 @@ export default function LivePage() {
                 <Radio className="h-3 w-3" />
                 Sync
               </Button>
+              <AmbientSound phase={state.phase} weather={state.weather} />
               {/* Real-time clock display */}
               <div className="glass-panel rounded-md px-3 py-1.5 flex items-center gap-2">
                 <div className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] animate-pulse" />
@@ -434,6 +438,14 @@ export default function LivePage() {
               </div>
             </div>
           )}
+
+          {/* Newspaper + Spectator (bottom-right) */}
+          <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-1.5 pointer-events-none">
+            <DailyNewspaper state={state} />
+            <div className="pointer-events-auto">
+              <SpectatorBar />
+            </div>
+          </div>
 
           {/* Council button when there's dialogue */}
           {state.council.dialogue.length > 0 && !councilOpen && (

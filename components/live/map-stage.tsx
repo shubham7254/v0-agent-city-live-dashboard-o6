@@ -34,14 +34,57 @@ function phaseLight(p: Phase) {
   }
 }
 
-// Bay Area biome colors
-const BIOME_C: Record<string, [number, number, number]> = {
+// Michigan season from real date
+type Season = "spring" | "summer" | "autumn" | "winter"
+function getMichiganSeason(): Season {
+  const month = parseInt(new Date().toLocaleString("en-US", { timeZone: "America/Detroit", month: "numeric" }), 10)
+  if (month >= 3 && month <= 5) return "spring"
+  if (month >= 6 && month <= 8) return "summer"
+  if (month >= 9 && month <= 11) return "autumn"
+  return "winter"
+}
+
+// Season-aware biome colors
+const BIOME_BASE: Record<string, [number, number, number]> = {
   plains:   [0.32, 0.42, 0.22],
   forest:   [0.22, 0.35, 0.16],
   water:    [0.22, 0.38, 0.48],
   mountain: [0.42, 0.40, 0.38],
   desert:   [0.58, 0.50, 0.35],
 }
+
+const SEASON_TINT: Record<Season, Record<string, [number, number, number]>> = {
+  spring: {
+    plains: [0.30, 0.50, 0.24], forest: [0.22, 0.42, 0.18], water: [0.20, 0.40, 0.50],
+    mountain: [0.42, 0.40, 0.38], desert: [0.55, 0.50, 0.36],
+  },
+  summer: {
+    plains: [0.32, 0.42, 0.22], forest: [0.22, 0.35, 0.16], water: [0.22, 0.38, 0.48],
+    mountain: [0.42, 0.40, 0.38], desert: [0.58, 0.50, 0.35],
+  },
+  autumn: {
+    plains: [0.45, 0.38, 0.20], forest: [0.40, 0.30, 0.14], water: [0.22, 0.36, 0.44],
+    mountain: [0.44, 0.40, 0.36], desert: [0.56, 0.48, 0.32],
+  },
+  winter: {
+    plains: [0.55, 0.56, 0.54], forest: [0.48, 0.50, 0.48], water: [0.30, 0.42, 0.50],
+    mountain: [0.60, 0.60, 0.58], desert: [0.58, 0.55, 0.48],
+  },
+}
+
+// Tree foliage colors per season
+const TREE_COLORS: Record<Season, number[]> = {
+  spring: [0x4a8a3a, 0x5a9a48, 0x3a7830, 0x68a858, 0x88bb55],
+  summer: [0x3a6830, 0x4a7838, 0x2a5820, 0x5a8a40, 0x688a4a],
+  autumn: [0xc86830, 0xd8a040, 0xb84820, 0xe8b848, 0xa04018, 0xd87830],
+  winter: [0x5a6058, 0x485048, 0x404840, 0x586058, 0x3a4038],
+}
+
+function getBiomeColor(biome: string, season: Season): [number, number, number] {
+  return SEASON_TINT[season][biome] ?? BIOME_BASE[biome] ?? [0.4, 0.4, 0.4]
+}
+
+const BIOME_C = BIOME_BASE // Keep reference for backward compat
 
 // Building configs
 interface BC { wall: number; roof: number; h: number; fx: number; fz: number; flat: boolean; modern: boolean; win: boolean; door: boolean }
@@ -182,6 +225,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     scene.add(basePlane)
 
     // ─── TERRAIN ───
+    const season = getMichiganSeason()
     const tileCount = MAP * MAP
     const tileGeo = new THREE.BoxGeometry(1, 0.12, 1)
     const tileMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 })
@@ -210,7 +254,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         tileMesh.setMatrixAt(idx, dummy.matrix)
         const base = tile.hasPath
           ? [0.28 + rng * 0.02, 0.28 + rng * 0.02, 0.27 + rng * 0.02]
-          : (BIOME_C[tile.biome] ?? BIOME_C.plains)
+          : getBiomeColor(tile.biome, season)
         c.setRGB(base[0] + (rng - 0.5) * 0.04, base[1] + (rng2 - 0.5) * 0.04, base[2] + (rng - 0.5) * 0.03, THREE.SRGBColorSpace)
         tileColors[idx * 3] = c.r
         tileColors[idx * 3 + 1] = c.g
@@ -469,7 +513,9 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         dummy.updateMatrix()
         canopyIM.setMatrixAt(i, dummy.matrix)
 
-        c.setHSL(0.24 + t.rng * 0.08, 0.3 + t.rng2 * 0.15, 0.22 + t.rng * 0.08)
+        const seasonColors = TREE_COLORS[season]
+  const treeC = seasonColors[Math.floor(t.rng * seasonColors.length) % seasonColors.length]
+  c.setHex(treeC)
         canopyColors[i * 3] = c.r
         canopyColors[i * 3 + 1] = c.g
         canopyColors[i * 3 + 2] = c.b
@@ -814,6 +860,34 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     const ro = new ResizeObserver(onResize)
     ro.observe(el)
 
+    // ─── WEATHER PARTICLES (snow/leaves/rain) ───
+    const particleCount = season === "winter" ? 600 : season === "autumn" ? 300 : 0
+    let particleSystem: THREE.Points | null = null
+    let particlePositions: Float32Array | null = null
+    let particleSpeeds: Float32Array | null = null
+
+    if (particleCount > 0) {
+      const pGeo = new THREE.BufferGeometry()
+      particlePositions = new Float32Array(particleCount * 3)
+      particleSpeeds = new Float32Array(particleCount)
+      for (let i = 0; i < particleCount; i++) {
+        particlePositions[i * 3] = (Math.random() - 0.5) * MAP
+        particlePositions[i * 3 + 1] = Math.random() * 15
+        particlePositions[i * 3 + 2] = (Math.random() - 0.5) * MAP
+        particleSpeeds[i] = 0.3 + Math.random() * 0.7
+      }
+      pGeo.setAttribute("position", new THREE.BufferAttribute(particlePositions, 3))
+      const pMat = new THREE.PointsMaterial({
+        color: season === "winter" ? 0xffffff : 0xc86830,
+        size: season === "winter" ? 0.06 : 0.08,
+        transparent: true,
+        opacity: season === "winter" ? 0.8 : 0.6,
+        depthWrite: false,
+      })
+      particleSystem = new THREE.Points(pGeo, pMat)
+      scene.add(particleSystem)
+    }
+
     // ─── ANIMATION LOOP ───
     const clock = new THREE.Clock()
     let animId = 0
@@ -908,6 +982,27 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
           scene.remove(mesh)
           agentMeshes.delete(id)
         }
+      }
+
+      // Animate particles (snow/leaves)
+      if (particleSystem && particlePositions && particleSpeeds) {
+        for (let i = 0; i < particleCount; i++) {
+          const spd = particleSpeeds[i]
+          particlePositions[i * 3 + 1] -= spd * 0.02 // fall
+          if (season === "autumn") {
+            particlePositions[i * 3] += Math.sin(t * 2 + i) * 0.005 // drift
+            particlePositions[i * 3 + 2] += Math.cos(t * 1.5 + i * 0.7) * 0.003
+          } else {
+            particlePositions[i * 3] += Math.sin(t + i * 0.1) * 0.002 // gentle snow drift
+          }
+          // Reset to top when hitting ground
+          if (particlePositions[i * 3 + 1] < 0) {
+            particlePositions[i * 3 + 1] = 12 + Math.random() * 3
+            particlePositions[i * 3] = (Math.random() - 0.5) * MAP
+            particlePositions[i * 3 + 2] = (Math.random() - 0.5) * MAP
+          }
+        }
+        (particleSystem.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true
       }
 
       renderer.render(scene, camera)
