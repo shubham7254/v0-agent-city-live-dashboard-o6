@@ -155,7 +155,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
 
     // ─── RENDERER ───
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25))
     renderer.setSize(el.clientWidth, el.clientHeight)
     renderer.shadowMap.enabled = true
     renderer.shadowMap.type = THREE.PCFSoftShadowMap
@@ -192,7 +192,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     const sunLight = new THREE.DirectionalLight(0xfff5e8, 1.0)
     sunLight.position.set(18, 30, 14)
     sunLight.castShadow = true
-    sunLight.shadow.mapSize.set(2048, 2048)
+    sunLight.shadow.mapSize.set(1024, 1024)
     sunLight.shadow.camera.far = 80
     sunLight.shadow.camera.left = -35
     sunLight.shadow.camera.right = 35
@@ -299,10 +299,10 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         const hasW = !!(map[y]?.[x - 1]?.hasPath)
 
         // Sidewalks on non-connected edges
-        if (!hasN) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx, rh + 0.03, wz - 0.46); s.castShadow = true; roadGroup.add(s) }
-        if (!hasS) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx, rh + 0.03, wz + 0.46); s.castShadow = true; roadGroup.add(s) }
-        if (!hasE) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx + 0.46, rh + 0.03, wz); s.rotation.y = Math.PI / 2; s.castShadow = true; roadGroup.add(s) }
-        if (!hasW) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx - 0.46, rh + 0.03, wz); s.rotation.y = Math.PI / 2; s.castShadow = true; roadGroup.add(s) }
+        if (!hasN) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx, rh + 0.03, wz - 0.46); roadGroup.add(s) }
+        if (!hasS) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx, rh + 0.03, wz + 0.46); roadGroup.add(s) }
+        if (!hasE) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx + 0.46, rh + 0.03, wz); s.rotation.y = Math.PI / 2; roadGroup.add(s) }
+        if (!hasW) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx - 0.46, rh + 0.03, wz); s.rotation.y = Math.PI / 2; roadGroup.add(s) }
 
         // Crosswalk stripes at intersections
         const dirs = [hasN, hasS, hasE, hasW].filter(Boolean).length
@@ -561,7 +561,6 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
             new THREE.CylinderGeometry(0.012, 0.015, 0.8, 5),
             new THREE.MeshStandardMaterial({ color: 0x505558, metalness: 0.3, roughness: 0.5 })
           )
-          pole.castShadow = true
           sg.add(pole)
 
           const arm = new THREE.Mesh(
@@ -688,7 +687,6 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         new THREE.MeshStandardMaterial({ color: 0x6890b0, roughness: 0.08, metalness: 0.12, transparent: true, opacity: 0.7 })
       )
       cb.position.y = 0.075
-      cb.castShadow = true
       cg.add(cb)
       // Headlights (emissive, visible at night)
       const hlGeo = new THREE.BoxGeometry(0.02, 0.025, 0.04)
@@ -826,21 +824,28 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
   }
   domEl.addEventListener("click", onClickForAgent)
 
-  // Cursor hover detection for agents
-  const hoverMouse = new THREE.Vector2()
-  const hoverRay = new THREE.Raycaster()
+  // Lightweight hover detection: use distance-based check instead of full raycasting
+  // Only check every 100ms and use screen-space distance to agent positions
+  let hoverTimeout: ReturnType<typeof setTimeout> | null = null
   const onHoverCheck = (e: MouseEvent) => {
-    const rect = domEl.getBoundingClientRect()
-    hoverMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
-    hoverMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
-    hoverRay.setFromCamera(hoverMouse, camera)
-    const agentMeshArray = Array.from(agentMeshes.values())
-    const allChildren: THREE.Object3D[] = []
-    for (const grp of agentMeshArray) {
-      grp.traverse((child) => allChildren.push(child))
-    }
-    const intersects = hoverRay.intersectObjects(allChildren, false)
-    domEl.style.cursor = intersects.length > 0 ? "pointer" : ""
+    if (hoverTimeout) return
+    hoverTimeout = setTimeout(() => {
+      hoverTimeout = null
+      // Simple screen-space distance check (much cheaper than raycasting)
+      const rect = domEl.getBoundingClientRect()
+      const mx = e.clientX - rect.left
+      const my = e.clientY - rect.top
+      let found = false
+      for (const [, grp] of agentMeshes) {
+        if (!grp.visible) continue
+        const pos = grp.position.clone().project(camera)
+        const sx = (pos.x * 0.5 + 0.5) * rect.width
+        const sy = (-pos.y * 0.5 + 0.5) * rect.height
+        const dist = Math.sqrt((mx - sx) ** 2 + (my - sy) ** 2)
+        if (dist < 20) { found = true; break }
+      }
+      domEl.style.cursor = found ? "pointer" : ""
+    }, 100)
   }
   domEl.addEventListener("mousemove", onHoverCheck)
 
@@ -891,12 +896,15 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     // ─── ANIMATION LOOP ───
     const clock = new THREE.Clock()
     let animId = 0
+    let lastPhase = ""
     function animate() {
       animId = requestAnimationFrame(animate)
       const t = clock.getElapsedTime()
       const ph = phaseRef.current
       const light = phaseLight(ph)
       const isNight = ph === "night" || ph === "evening"
+      const phaseChanged = ph !== lastPhase
+      lastPhase = ph
 
       // Update lighting
       sunLight.intensity = light.sun
@@ -908,29 +916,32 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
 
       // Moonlight -- bright blue fill at night, off during day
       moonLight.intensity = ph === "night" ? 0.4 : ph === "evening" ? 0.2 : 0
-      fog.color.set(light.fog)
-      fog.near = light.fogN
-      fog.far = light.fogF
-      scene.background = new THREE.Color(light.sky)
-
-      // Boost exposure at night so things are visible
-      renderer.toneMappingExposure = ph === "night" ? 1.6 : ph === "evening" ? 1.3 : 1.1
-
-      // Night lights -- streetlights and building windows
-      for (const nl of nightLights) {
-        nl.intensity = isNight ? 4.0 : 0
-      }
-      // Window glass emissive glow at night
-      for (const gm of windowGlassMats) {
-        gm.emissiveIntensity = isNight ? 0.8 : ph === "evening" ? 0.4 : 0
-        gm.opacity = isNight ? 0.9 : 0.65
+      if (phaseChanged) {
+        fog.color.set(light.fog)
+        fog.near = light.fogN
+        fog.far = light.fogF
+        scene.background = new THREE.Color(light.sky)
+        renderer.toneMappingExposure = ph === "night" ? 1.6 : ph === "evening" ? 1.3 : 1.1
       }
 
-      // Animate water
-      for (const wm of waterMeshes) {
-        const ox = wm.userData.ox as number
-        const oz = wm.userData.oz as number
-        wm.position.y = -0.06 + Math.sin(t * 0.4 + ox * 0.25 + oz * 0.2) * 0.01
+      // Night lights + window glow -- only update when phase changes
+      if (phaseChanged) {
+        for (const nl of nightLights) {
+          nl.intensity = isNight ? 4.0 : 0
+        }
+        for (const gm of windowGlassMats) {
+          gm.emissiveIntensity = isNight ? 0.8 : ph === "evening" ? 0.4 : 0
+          gm.opacity = isNight ? 0.9 : 0.65
+        }
+      }
+
+      // Animate water (every 3rd frame to save CPU)
+      if (animId % 3 === 0) {
+        for (const wm of waterMeshes) {
+          const ox = wm.userData.ox as number
+          const oz = wm.userData.oz as number
+          wm.position.y = -0.06 + Math.sin(t * 0.4 + ox * 0.25 + oz * 0.2) * 0.01
+        }
       }
 
       // Animate moving cars along road paths
@@ -984,8 +995,8 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         }
       }
 
-      // Animate particles (snow/leaves)
-      if (particleSystem && particlePositions && particleSpeeds) {
+      // Animate particles (snow/leaves) -- every 2nd frame
+      if (particleSystem && particlePositions && particleSpeeds && animId % 2 === 0) {
         for (let i = 0; i < particleCount; i++) {
           const spd = particleSpeeds[i]
           particlePositions[i * 3 + 1] -= spd * 0.02 // fall
@@ -1028,6 +1039,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
   domEl.removeEventListener("contextmenu", onContextMenu)
   domEl.removeEventListener("click", onClickForAgent)
   domEl.removeEventListener("mousemove", onHoverCheck)
+  if (hoverTimeout) clearTimeout(hoverTimeout)
   renderer.dispose()
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement)
     }

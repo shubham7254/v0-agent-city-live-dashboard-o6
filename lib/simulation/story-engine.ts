@@ -14,6 +14,7 @@ function clamp(v: number, min: number, max: number) {
 
 // ── Relationship dynamics ──────────────────────────────
 function updateRelationship(agent: Agent, targetId: string, delta: number, reason: string) {
+  if (!agent.relationships) agent.relationships = []
   let edge = agent.relationships.find((r) => r.targetId === targetId)
   if (!edge) {
     edge = { targetId, score: 0, history: [] }
@@ -37,6 +38,7 @@ function updateRelationship(agent: Agent, targetId: string, delta: number, reaso
 }
 
 function getRelScore(agent: Agent, targetId: string): number {
+  if (!agent.relationships) return 0
   return agent.relationships.find((r) => r.targetId === targetId)?.score ?? 0
 }
 
@@ -350,8 +352,21 @@ function tryDiscoveryEvent(state: WorldState): StoryEvent | null {
   return makeStory(state.day, state.hour, "discovery", t.title, t.desc, [agent.id], t.consequence)
 }
 
+// ── Ensure agent has new fields (for agents loaded from old Redis state) ──
+function ensureAgentFields(agent: Agent) {
+  if (!agent.relationships) agent.relationships = []
+  if (!agent.storyLog) agent.storyLog = []
+  if (!agent.moodHistory) agent.moodHistory = [100 - (agent.stress ?? 30)]
+}
+
 // ── Main story tick ──────────────────────────────────
 export function runStoryEngine(state: WorldState): StoryEvent[] {
+  // Initialize missing fields on ALL agents first
+  for (const agent of state.agents) {
+    ensureAgentFields(agent)
+  }
+  if (!state.storyLog) state.storyLog = []
+
   const stories: StoryEvent[] = []
 
   const generators = [
@@ -365,29 +380,32 @@ export function runStoryEngine(state: WorldState): StoryEvent[] {
   ]
 
   for (const gen of generators) {
-    const story = gen(state)
-    if (story) {
-      stories.push(story)
-      // Add to involved agents' story logs
-      for (const agentId of story.involvedAgents) {
-        const agent = state.agents.find((a) => a.id === agentId)
-        if (agent) {
-          agent.storyLog.push(story)
-          if (agent.storyLog.length > 30) agent.storyLog = agent.storyLog.slice(-30)
-          // Add a quote based on the story
-          const quotes = generateStoryQuote(agent, story)
-          if (quotes) {
-            agent.recentQuotes.unshift(quotes)
-            if (agent.recentQuotes.length > 5) agent.recentQuotes = agent.recentQuotes.slice(0, 5)
+    try {
+      const story = gen(state)
+      if (story) {
+        stories.push(story)
+        // Add to involved agents' story logs
+        for (const agentId of story.involvedAgents) {
+          const agent = state.agents.find((a) => a.id === agentId)
+          if (agent) {
+            agent.storyLog.push(story)
+            if (agent.storyLog.length > 30) agent.storyLog = agent.storyLog.slice(-30)
+            const quotes = generateStoryQuote(agent, story)
+            if (quotes) {
+              agent.recentQuotes.unshift(quotes)
+              if (agent.recentQuotes.length > 5) agent.recentQuotes = agent.recentQuotes.slice(0, 5)
+            }
           }
         }
       }
+    } catch {
+      // Skip individual story generator failures silently
     }
   }
 
   // Record mood history for all agents
   for (const agent of state.agents) {
-    agent.moodHistory.push(100 - agent.stress)
+    agent.moodHistory.push(100 - (agent.stress ?? 30))
     if (agent.moodHistory.length > 48) agent.moodHistory = agent.moodHistory.slice(-48)
   }
 
