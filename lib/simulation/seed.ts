@@ -263,7 +263,8 @@ function generateMap(): MapTile[][] {
 export function createInitialState(): WorldState {
   const now = Date.now()
   const realDate = new Date(now)
-  const realHour = realDate.getHours()
+  // Use Michigan (America/Detroit) timezone
+  const realHour = parseInt(realDate.toLocaleString("en-US", { timeZone: "America/Detroit", hour: "numeric", hour12: false }), 10) % 24
 
   // Generate 50 diverse agents
   const agents: Agent[] = []

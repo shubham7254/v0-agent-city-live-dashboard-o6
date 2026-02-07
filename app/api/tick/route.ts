@@ -26,6 +26,15 @@ export async function POST() {
       state.humanEvents = humanNewsGateway(state.day)
     }
 
+    // Fetch real Michigan weather
+    try {
+      const weatherRes = await fetch(new URL("/api/weather", process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000").toString())
+      if (weatherRes.ok) {
+        const wd = await weatherRes.json()
+        if (wd.weather) state.weather = wd.weather
+      }
+    } catch { /* use existing weather if fetch fails */ }
+
     const result = executeTick(state)
 
     // Save state

@@ -31,6 +31,7 @@ function useRealClock() {
     const update = () =>
       setTime(
         new Date().toLocaleTimeString("en-US", {
+          timeZone: "America/Detroit",
           hour: "numeric",
           minute: "2-digit",
           second: "2-digit",

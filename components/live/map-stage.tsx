@@ -29,8 +29,8 @@ function phaseLight(p: Phase) {
   switch (p) {
     case "morning": return { sun: 0.75, color: 0xffecd2, amb: 0.45, sky: 0x9cb8cf, fog: 0xc8d8e4, fogN: 20, fogF: 55, sh: 0.3 }
     case "day":     return { sun: 1.0, color: 0xfff5e8, amb: 0.55, sky: 0x8aaccc, fog: 0xb8ccd8, fogN: 25, fogF: 65, sh: 0.35 }
-    case "evening": return { sun: 0.45, color: 0xe07848, amb: 0.2, sky: 0x2a1840, fog: 0x3a2840, fogN: 15, fogF: 45, sh: 0.15 }
-    case "night":   return { sun: 0.06, color: 0x283848, amb: 0.08, sky: 0x060a10, fog: 0x080c14, fogN: 10, fogF: 40, sh: 0.05 }
+    case "evening": return { sun: 0.5, color: 0xe07848, amb: 0.35, sky: 0x2a2040, fog: 0x3a2840, fogN: 18, fogF: 50, sh: 0.2 }
+    case "night":   return { sun: 0.15, color: 0x4466aa, amb: 0.25, sky: 0x0a1020, fog: 0x101828, fogN: 12, fogF: 45, sh: 0.1 }
   }
 }
 
@@ -163,6 +163,11 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
     const hemiLight = new THREE.HemisphereLight(0xa8c0d8, 0x607040, 0.2)
     scene.add(hemiLight)
 
+    // Moonlight (cool blue, from upper-right, always present but only visible at night)
+    const moonLight = new THREE.DirectionalLight(0x6688cc, 0)
+    moonLight.position.set(-10, 25, -8)
+    scene.add(moonLight)
+
     // ─── BASE PLANE ───
     const basePlane = new THREE.Mesh(
       new THREE.PlaneGeometry(200, 200),
@@ -277,6 +282,7 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
     const bldGroup = new THREE.Group()
     scene.add(bldGroup)
     const nightLights: THREE.PointLight[] = []
+    const windowGlassMats: THREE.MeshStandardMaterial[] = []
 
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
@@ -367,7 +373,8 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
           const winGeo = new THREE.BoxGeometry(0.08, 0.1, 0.008)
           const winFrameGeo = new THREE.BoxGeometry(0.095, 0.115, 0.004)
           const frameMat = new THREE.MeshStandardMaterial({ color: cfg.modern ? 0xe0dcd6 : 0xc8c2b8, roughness: 0.75 })
-          const glassMat = new THREE.MeshStandardMaterial({ color: 0x6080a0, roughness: 0.08, metalness: 0.12, transparent: true, opacity: 0.65 })
+          const glassMat = new THREE.MeshStandardMaterial({ color: 0x6080a0, roughness: 0.08, metalness: 0.12, transparent: true, opacity: 0.65, emissive: 0xffcc44, emissiveIntensity: 0 })
+          windowGlassMats.push(glassMat)
           for (let wi = 0; wi < nw; wi++) {
             const wxp = -fx / 2 + spacing * (wi + 1)
             const wyp = h * 0.55 + 0.03
@@ -395,12 +402,17 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
           grp.add(doorM)
         }
 
-        // Night interior glow placeholder
+        // Night interior glow -- warm window light
         if (cfg.win && h > 0.6) {
-          const pl = new THREE.PointLight(0xffc844, 0, 2, 2)
-          pl.position.set(0, h * 0.4, 0)
+          const pl = new THREE.PointLight(0xffcc55, 0, 4, 1.5)
+          pl.position.set(0, h * 0.5, fz / 2 + 0.1)
           grp.add(pl)
           nightLights.push(pl)
+          // Also add a back-facing glow
+          const pl2 = new THREE.PointLight(0xffcc55, 0, 3, 1.5)
+          pl2.position.set(0, h * 0.5, -fz / 2 - 0.1)
+          grp.add(pl2)
+          nightLights.push(pl2)
         }
 
         bldGroup.add(grp)
@@ -518,7 +530,7 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
           lamp.position.set(-0.1, 0.42, 0)
           sg.add(lamp)
 
-          const pl = new THREE.PointLight(0xffd888, 0, 3, 2)
+          const pl = new THREE.PointLight(0xffd888, 0, 5, 1.5)
           pl.position.set(-0.1, 0.4, 0)
           sg.add(pl)
           slLights.push(pl)
@@ -564,25 +576,64 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       }
     }
 
-    // ─── MOVING CARS ───
+    // ─── MOVING CARS (road-constrained paths) ───
     const movingCarGroup: THREE.Group[] = []
-    const roadTilesForCars: { x: number; z: number }[] = []
+
+    // Build adjacency list for road tiles
+    const roadSet = new Set<string>()
+    const roadList: { x: number; z: number }[] = []
     for (let y = 0; y < MAP; y++)
       for (let x = 0; x < MAP; x++)
-        if (map[y]?.[x]?.hasPath) roadTilesForCars.push({ x, z: y })
+        if (map[y]?.[x]?.hasPath) {
+          roadSet.add(`${x},${y}`)
+          roadList.push({ x, z: y })
+        }
 
-    const numCars = Math.min(12, Math.floor(roadTilesForCars.length / 6))
-    const mvCarColors = [0x8a2e20, 0x1e4e7a, 0x1e6e38, 0xd8c0a0, 0x383838, 0xc02020, 0x1a7878]
+    function getRoadNeighbors(rx: number, rz: number): { x: number; z: number }[] {
+      const nb: { x: number; z: number }[] = []
+      if (roadSet.has(`${rx},${rz - 1}`)) nb.push({ x: rx, z: rz - 1 })
+      if (roadSet.has(`${rx},${rz + 1}`)) nb.push({ x: rx, z: rz + 1 })
+      if (roadSet.has(`${rx + 1},${rz}`)) nb.push({ x: rx + 1, z: rz })
+      if (roadSet.has(`${rx - 1},${rz}`)) nb.push({ x: rx - 1, z: rz })
+      return nb
+    }
+
+    // Build looping paths for each car by random-walking on the road graph
+    function buildCarPath(startIdx: number, length: number): { x: number; z: number }[] {
+      const start = roadList[startIdx % roadList.length]
+      if (!start) return []
+      const path = [start]
+      let cur = start
+      let prev = { x: -1, z: -1 }
+      for (let step = 0; step < length; step++) {
+        const nb = getRoadNeighbors(cur.x, cur.z).filter(n => !(n.x === prev.x && n.z === prev.z))
+        if (nb.length === 0) break
+        const rng = hash(startIdx * 71 + step * 13, step * 37 + startIdx * 53)
+        const next = nb[Math.floor(rng * nb.length)]
+        prev = cur
+        cur = next
+        path.push(cur)
+      }
+      return path
+    }
+
+    const numCars = Math.min(10, Math.floor(roadList.length / 8))
+    const mvCarColors = [0x8a2e20, 0x1e4e7a, 0x1e6e38, 0xd8c0a0, 0x383838, 0xc02020, 0x1a7878, 0xf0e0c0, 0x2a2a2a, 0x884422]
     for (let i = 0; i < numCars; i++) {
-      const rt = roadTilesForCars[Math.floor(hash(i * 29, i * 43) * roadTilesForCars.length)]
-      if (!rt) continue
+      const pathLen = 30 + Math.floor(hash(i * 19, i * 41) * 40)
+      const startIdx = Math.floor(hash(i * 29, i * 43) * roadList.length)
+      const path = buildCarPath(startIdx, pathLen)
+      if (path.length < 4) continue
+
       const cg = new THREE.Group()
+      // Car body
       const bd = new THREE.Mesh(
         new THREE.BoxGeometry(0.32, 0.1, 0.16),
         new THREE.MeshStandardMaterial({ color: mvCarColors[i % mvCarColors.length], roughness: 0.3, metalness: 0.45 })
       )
       bd.castShadow = true
       cg.add(bd)
+      // Cabin glass
       const cb = new THREE.Mesh(
         new THREE.BoxGeometry(0.16, 0.065, 0.13),
         new THREE.MeshStandardMaterial({ color: 0x6890b0, roughness: 0.08, metalness: 0.12, transparent: true, opacity: 0.7 })
@@ -590,7 +641,18 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       cb.position.y = 0.075
       cb.castShadow = true
       cg.add(cb)
-      cg.userData = { startX: rt.x, startZ: rt.z, dir: i % 2 === 0 ? "h" : "v", speed: 0.4 + hash(i * 17, i * 31) * 0.5, idx: i }
+      // Headlights (emissive, visible at night)
+      const hlGeo = new THREE.BoxGeometry(0.02, 0.025, 0.04)
+      const hlMat = new THREE.MeshStandardMaterial({ color: 0xffffdd, emissive: 0xffffaa, emissiveIntensity: 0.3 })
+      windowGlassMats.push(hlMat) // Reuse the glow toggle for headlights too
+      const hl1 = new THREE.Mesh(hlGeo, hlMat); hl1.position.set(0.17, -0.01, 0.05); cg.add(hl1)
+      const hl2 = new THREE.Mesh(hlGeo, hlMat); hl2.position.set(0.17, -0.01, -0.05); cg.add(hl2)
+      // Tail lights
+      const tlMat = new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff2200, emissiveIntensity: 0.2 })
+      const tl1 = new THREE.Mesh(hlGeo, tlMat); tl1.position.set(-0.17, -0.01, 0.05); cg.add(tl1)
+      const tl2 = new THREE.Mesh(hlGeo, tlMat); tl2.position.set(-0.17, -0.01, -0.05); cg.add(tl2)
+
+      cg.userData = { path, speed: 0.3 + hash(i * 17, i * 31) * 0.4, idx: i }
       scene.add(cg)
       movingCarGroup.push(cg)
     }
@@ -706,16 +768,28 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
       sunLight.intensity = light.sun
       sunLight.color.set(light.color)
       ambLight.intensity = light.amb
-      hemiLight.intensity = ph === "night" ? 0.06 : 0.2
-      hemiLight.color.set(ph === "night" ? 0x182838 : 0xa8c0d8)
-      hemiLight.groundColor.set(ph === "night" ? 0x0a0e14 : 0x607040)
+      hemiLight.intensity = ph === "night" ? 0.12 : 0.2
+      hemiLight.color.set(ph === "night" ? 0x283858 : 0xa8c0d8)
+      hemiLight.groundColor.set(ph === "night" ? 0x141c28 : 0x607040)
+
+      // Moonlight -- bright blue fill at night, off during day
+      moonLight.intensity = ph === "night" ? 0.4 : ph === "evening" ? 0.2 : 0
       fog.color.set(light.fog)
       fog.near = light.fogN
       fog.far = light.fogF
+      scene.background = new THREE.Color(light.sky)
 
-      // Night lights
+      // Boost exposure at night so things are visible
+      renderer.toneMappingExposure = ph === "night" ? 1.6 : ph === "evening" ? 1.3 : 1.1
+
+      // Night lights -- streetlights and building windows
       for (const nl of nightLights) {
-        nl.intensity = isNight ? 1.5 : 0
+        nl.intensity = isNight ? 4.0 : 0
+      }
+      // Window glass emissive glow at night
+      for (const gm of windowGlassMats) {
+        gm.emissiveIntensity = isNight ? 0.8 : ph === "evening" ? 0.4 : 0
+        gm.opacity = isNight ? 0.9 : 0.65
       }
 
       // Animate water
@@ -725,16 +799,29 @@ export function MapStage({ map, agents, phase }: MapStageProps) {
         wm.position.y = -0.06 + Math.sin(t * 0.4 + ox * 0.25 + oz * 0.2) * 0.01
       }
 
-      // Animate moving cars
+      // Animate moving cars along road paths
       for (const cg of movingCarGroup) {
-        const d = cg.userData as { startX: number; startZ: number; dir: string; speed: number; idx: number }
-        const ct = t * d.speed + d.idx * 5.3
-        const range = 8
-        const offset = ((ct % (range * 2)) - range)
-        const wx = d.dir === "h" ? d.startX - HALF + offset : d.startX - HALF + 0.5
-        const wz = d.dir === "v" ? d.startZ - HALF + offset : d.startZ - HALF + 0.5
-        cg.position.set(wx, hillH(wx, wz) * 0.1 + 0.08, wz)
-        cg.rotation.y = d.dir === "h" ? (offset > 0 ? 0 : Math.PI) : (offset > 0 ? Math.PI / 2 : -Math.PI / 2)
+        const d = cg.userData as { path: { x: number; z: number }[]; speed: number; idx: number }
+        const pathLen = d.path.length
+        if (pathLen < 2) continue
+        // Progress along path (ping-pong)
+        const totalDist = pathLen - 1
+        const ct = (t * d.speed + d.idx * 3.7) % (totalDist * 2)
+        const progress = ct <= totalDist ? ct : totalDist * 2 - ct
+        const segIdx = Math.min(Math.floor(progress), pathLen - 2)
+        const frac = progress - segIdx
+        const a = d.path[segIdx]
+        const b = d.path[segIdx + 1]
+        const wx = (a.x + (b.x - a.x) * frac) - HALF + 0.5
+        const wz = (a.z + (b.z - a.z) * frac) - HALF + 0.5
+        const rh = hillH(wx, wz) * 0.1
+        cg.position.set(wx, rh + 0.08, wz)
+        // Face direction of travel
+        const dx = b.x - a.x
+        const dz = b.z - a.z
+        if (dx !== 0 || dz !== 0) {
+          cg.rotation.y = Math.atan2(dx, dz)
+        }
       }
 
       // Update agents

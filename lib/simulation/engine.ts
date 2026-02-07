@@ -549,7 +549,7 @@ function runHourlyEvents(state: WorldState): { events: WorldEvent[]; news: NewsI
       timestamp: Date.now(),
     })
 
-    if (Math.random() < 0.3) state.weather = randomPick(WEATHERS)
+    // Weather is now set from real Michigan data in the tick route
 
     state.metrics.morale = clamp(state.metrics.morale + (state.metrics.foodDays > 20 ? 2 : -3) + (state.metrics.unrest > 50 ? -3 : 1), 0, 100)
     state.metrics.unrest = clamp(state.metrics.unrest + (state.metrics.morale < 40 ? 3 : -2), 0, 100)
@@ -606,7 +606,8 @@ export function executeTick(state: WorldState): TickResult {
   s.lastTickAt = Date.now()
 
   const now = new Date()
-  const realHour = now.getHours()
+  // Use Michigan (America/Detroit) timezone
+  const realHour = parseInt(now.toLocaleString("en-US", { timeZone: "America/Detroit", hour: "numeric", hour12: false }), 10) % 24
   const prevHour = s.hour
 
   if (realHour < prevHour && prevHour >= 22) {
