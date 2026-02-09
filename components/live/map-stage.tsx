@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useCallback, useEffect, memo, useState } from "react"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import { OrbitControls, Environment, Sky, MeshReflectorMaterial } from "@react-three/drei"
+import { OrbitControls, Sky } from "@react-three/drei"
 import * as THREE from "three"
 import type { Agent, MapTile, Phase, WorldMetrics, CameraMode } from "@/lib/types"
 
@@ -494,19 +494,14 @@ const WaterSurface = memo(function WaterSurface({ map }: { map: MapTile[][] }) {
 
   return (
     <mesh ref={meshRef} position={[cx, -0.04, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-      <planeGeometry args={[sx, sz, 1, 1]} />
-      <MeshReflectorMaterial
-        mirror={0.4}
-        blur={[300, 100]}
-        resolution={512}
-        mixBlur={0.8}
-        mixStrength={0.6}
-        depthScale={0.4}
-        minDepthThreshold={0.4}
-        maxDepthThreshold={1}
+      <planeGeometry args={[sx, sz, 16, 16]} />
+      <meshStandardMaterial
         color={0x1a4868}
-        metalness={0.2}
-        roughness={0.6}
+        metalness={0.35}
+        roughness={0.4}
+        transparent
+        opacity={0.85}
+        envMapIntensity={0.8}
       />
     </mesh>
   )
@@ -627,7 +622,7 @@ const WeatherParticles = memo(function WeatherParticles() {
   return (
     <points ref={pointsRef}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} count={particleCount} />
       </bufferGeometry>
       <pointsMaterial
         color={season === "winter" ? 0xffffff : 0xc86830}
@@ -713,7 +708,6 @@ function CityScene({ map, agents, phase, onAgentClick }: {
     <>
       <SceneLighting phase={phase} />
       <DynamicSky phase={phase} />
-      <Environment preset={phase === "night" ? "night" : phase === "evening" ? "sunset" : "city"} background={false} />
       <OrbitControls
         makeDefault
         enableDamping
@@ -749,6 +743,7 @@ interface MapStageProps {
 }
 
 export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick }: MapStageProps) {
+  console.log("[v0] MapStage rendering, map:", map?.length, "agents:", agents?.length, "phase:", phase)
   return (
     <div className="relative flex-1 w-full h-full" style={{ minHeight: 400 }}>
       <Canvas
@@ -760,7 +755,7 @@ export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick
           far: 500,
         }}
         shadows
-        dpr={[1, 2]}
+        dpr={[1, 1.5]}
         gl={{
           antialias: true,
           alpha: false,
@@ -768,9 +763,12 @@ export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick
         }}
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping
-          gl.toneMappingExposure = 1.2
+          gl.toneMappingExposure = 1.15
           gl.outputColorSpace = THREE.SRGBColorSpace
-          gl.shadowMap.type = THREE.PCFSoftShadowMap
+          if (gl.shadowMap) {
+            gl.shadowMap.enabled = true
+            gl.shadowMap.type = THREE.PCFSoftShadowMap
+          }
         }}
       >
         <CityScene map={map} agents={agents} phase={phase} onAgentClick={onAgentClick} />
