@@ -1,8 +1,8 @@
 "use client"
 
-import { useRef, useMemo, useCallback, memo } from "react"
+import { useRef, useMemo, useCallback, useEffect, memo, useState } from "react"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import { OrbitControls, Instances, Instance } from "@react-three/drei"
+import { OrbitControls } from "@react-three/drei"
 import * as THREE from "three"
 import type { Agent, MapTile, Phase, WorldMetrics, CameraMode } from "@/lib/types"
 
@@ -35,8 +35,8 @@ function getMichiganSeason(): Season {
 }
 
 const SEASON_TINT: Record<Season, Record<string, [number, number, number]>> = {
-  spring: { plains: [0.30, 0.50, 0.24], forest: [0.22, 0.42, 0.18], water: [0.20, 0.40, 0.50], mountain: [0.42, 0.40, 0.38], desert: [0.55, 0.50, 0.36] },
-  summer: { plains: [0.32, 0.42, 0.22], forest: [0.22, 0.35, 0.16], water: [0.22, 0.38, 0.48], mountain: [0.42, 0.40, 0.38], desert: [0.58, 0.50, 0.35] },
+  spring: { plains: [0.38, 0.52, 0.28], forest: [0.28, 0.42, 0.18], water: [0.18, 0.38, 0.52], mountain: [0.48, 0.46, 0.42], desert: [0.6, 0.52, 0.36] },
+  summer: { plains: [0.35, 0.48, 0.22], forest: [0.22, 0.38, 0.14], water: [0.16, 0.34, 0.48], mountain: [0.46, 0.44, 0.4], desert: [0.62, 0.55, 0.35] },
   autumn: { plains: [0.45, 0.38, 0.20], forest: [0.40, 0.30, 0.14], water: [0.22, 0.36, 0.44], mountain: [0.44, 0.40, 0.36], desert: [0.56, 0.48, 0.32] },
   winter: { plains: [0.55, 0.56, 0.54], forest: [0.48, 0.50, 0.48], water: [0.30, 0.42, 0.50], mountain: [0.60, 0.60, 0.58], desert: [0.58, 0.55, 0.48] },
 }
@@ -80,17 +80,18 @@ const B: Record<string, BC> = {
   workshop:   { wall: 0x686460, roof: 0x3a3835, h: 1.5, fx: 0.58, fz: 0.48, flat: true, win: true, door: true },
 }
 
-// ═══════════════════════════════════════════════════
-// PRE-COMPUTED DATA TYPES
-// ═══════════════════════════════════════════════════
-interface TileData { x: number; y: number; z: number; color: [number, number, number] }
-interface RoadData { x: number; y: number; z: number }
+// Pre-computed data types
 interface BuildingData { x: number; z: number; baseY: number; cfg: BC; h: number; fx: number; fz: number; rng: number }
 interface TreeData { x: number; z: number; baseY: number; trunkH: number; canopyScale: number; color: number; rotY: number }
-interface WaterData { x: number; z: number; idx: number }
+interface WaterTile { x: number; z: number; idx: number }
+
+// Shared geometry/material refs (created once)
+const _dummy = new THREE.Object3D()
+const _color = new THREE.Color()
+const _bgColor = new THREE.Color()
 
 // ═══════════════════════════════════════════════════
-// SCENE LIGHTING COMPONENT
+// SCENE LIGHTING
 // ═══════════════════════════════════════════════════
 const SceneLighting = memo(function SceneLighting({ phase }: { phase: Phase }) {
   const sunRef = useRef<THREE.DirectionalLight>(null)
@@ -112,7 +113,8 @@ const SceneLighting = memo(function SceneLighting({ phase }: { phase: Phase }) {
       hemiRef.current.groundColor.set(phase === "night" ? 0x141c28 : 0x607040)
     }
     if (moonRef.current) moonRef.current.intensity = phase === "night" ? 0.4 : phase === "evening" ? 0.2 : 0
-    scene.background = new THREE.Color(light.sky)
+    _bgColor.set(light.sky)
+    scene.background = _bgColor
     if (scene.fog instanceof THREE.Fog) {
       scene.fog.color.set(light.fog)
       scene.fog.near = light.fogN
@@ -147,51 +149,49 @@ const SceneLighting = memo(function SceneLighting({ phase }: { phase: Phase }) {
 })
 
 // ═══════════════════════════════════════════════════
-// TERRAIN - merged geometry for max performance
+// TERRAIN - instanced with callback ref setup
 // ═══════════════════════════════════════════════════
 const Terrain = memo(function Terrain({ map }: { map: MapTile[][] }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null)
   const season = useMemo(() => getMichiganSeason(), [])
-
   const tileCount = MAP * MAP
 
-  useMemo(() => {
-    if (!meshRef.current) return
-    const dummy = new THREE.Object3D()
-    const colors = new Float32Array(tileCount * 3)
-    const c = new THREE.Color()
-    let idx = 0
-    for (let y = 0; y < MAP; y++) {
-      for (let x = 0; x < MAP; x++) {
-        const tile = map[y]?.[x]
-        if (!tile) { idx++; continue }
-        const wx = x - HALF + 0.5
-        const wz = y - HALF + 0.5
-        const rng = hash(x * 11, y * 23)
-        const rng2 = hash(x * 37, y * 53)
-        let h = 0
-        if (tile.biome === "water") h = -0.12
-        else if (tile.hasPath || tile.building) h = hillH(wx, wz) * 0.1
-        else h = hillH(wx, wz)
-        dummy.position.set(wx, h - 0.06, wz)
-        dummy.rotation.set(0, 0, 0)
-        dummy.scale.set(1.005, 1, 1.005)
-        dummy.updateMatrix()
-        meshRef.current!.setMatrixAt(idx, dummy.matrix)
-        const base = tile.hasPath
-          ? [0.28 + rng * 0.02, 0.28 + rng * 0.02, 0.27 + rng * 0.02] as [number, number, number]
-          : getBiomeColor(tile.biome, season)
-        c.setRGB(base[0] + (rng - 0.5) * 0.04, base[1] + (rng2 - 0.5) * 0.04, base[2] + (rng - 0.5) * 0.03, THREE.SRGBColorSpace)
-        colors[idx * 3] = c.r
-        colors[idx * 3 + 1] = c.g
-        colors[idx * 3 + 2] = c.b
-        idx++
+  const setupTerrain = useCallback(
+    (mesh: THREE.InstancedMesh | null) => {
+      if (!mesh) return
+      const colors = new Float32Array(tileCount * 3)
+      let idx = 0
+      for (let y = 0; y < MAP; y++) {
+        for (let x = 0; x < MAP; x++) {
+          const tile = map[y]?.[x]
+          if (!tile) { idx++; continue }
+          const wx = x - HALF + 0.5
+          const wz = y - HALF + 0.5
+          const rng = hash(x * 11, y * 23)
+          const rng2 = hash(x * 37, y * 53)
+          let h = 0
+          if (tile.biome === "water") h = -0.12
+          else if (tile.hasPath || tile.building) h = hillH(wx, wz) * 0.1
+          else h = hillH(wx, wz)
+          _dummy.position.set(wx, h - 0.06, wz)
+          _dummy.rotation.set(0, 0, 0)
+          _dummy.scale.set(1.005, 1, 1.005)
+          _dummy.updateMatrix()
+          mesh.setMatrixAt(idx, _dummy.matrix)
+          const base = tile.hasPath
+            ? [0.28 + rng * 0.02, 0.28 + rng * 0.02, 0.27 + rng * 0.02] as [number, number, number]
+            : getBiomeColor(tile.biome, season)
+          _color.setRGB(base[0] + (rng - 0.5) * 0.04, base[1] + (rng2 - 0.5) * 0.04, base[2] + (rng - 0.5) * 0.03, THREE.SRGBColorSpace)
+          colors[idx * 3] = _color.r
+          colors[idx * 3 + 1] = _color.g
+          colors[idx * 3 + 2] = _color.b
+          idx++
+        }
       }
-    }
-    meshRef.current!.instanceMatrix.needsUpdate = true
-    meshRef.current!.geometry.setAttribute("color", new THREE.InstancedBufferAttribute(colors, 3))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meshRef.current, map, season])
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.geometry.setAttribute("color", new THREE.InstancedBufferAttribute(colors, 3))
+    },
+    [map, season, tileCount]
+  )
 
   return (
     <>
@@ -199,7 +199,7 @@ const Terrain = memo(function Terrain({ map }: { map: MapTile[][] }) {
         <planeGeometry args={[200, 200]} />
         <meshLambertMaterial color={0x4a6830} />
       </mesh>
-      <instancedMesh ref={meshRef} args={[undefined, undefined, tileCount]} receiveShadow>
+      <instancedMesh ref={setupTerrain} args={[undefined, undefined, tileCount]} receiveShadow>
         <boxGeometry args={[1, 0.12, 1]} />
         <meshLambertMaterial vertexColors />
       </instancedMesh>
@@ -208,11 +208,9 @@ const Terrain = memo(function Terrain({ map }: { map: MapTile[][] }) {
 })
 
 // ═══════════════════════════════════════════════════
-// ROADS - instanced
+// ROADS - instanced with callback ref
 // ═══════════════════════════════════════════════════
 const Roads = memo(function Roads({ map }: { map: MapTile[][] }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null)
-
   const roadCount = useMemo(() => {
     let count = 0
     for (let y = 0; y < MAP; y++)
@@ -221,29 +219,30 @@ const Roads = memo(function Roads({ map }: { map: MapTile[][] }) {
     return count
   }, [map])
 
-  useMemo(() => {
-    if (!meshRef.current || roadCount === 0) return
-    const dummy = new THREE.Object3D()
-    let idx = 0
-    for (let y = 0; y < MAP; y++) {
-      for (let x = 0; x < MAP; x++) {
-        if (!map[y]?.[x]?.hasPath) continue
-        const wx = x - HALF + 0.5
-        const wz = y - HALF + 0.5
-        dummy.position.set(wx, hillH(wx, wz) * 0.1 + 0.01, wz)
-        dummy.rotation.set(0, 0, 0)
-        dummy.scale.set(1, 1, 1)
-        dummy.updateMatrix()
-        meshRef.current!.setMatrixAt(idx++, dummy.matrix)
+  const setupRoads = useCallback(
+    (mesh: THREE.InstancedMesh | null) => {
+      if (!mesh || roadCount === 0) return
+      let idx = 0
+      for (let y = 0; y < MAP; y++) {
+        for (let x = 0; x < MAP; x++) {
+          if (!map[y]?.[x]?.hasPath) continue
+          const wx = x - HALF + 0.5
+          const wz = y - HALF + 0.5
+          _dummy.position.set(wx, hillH(wx, wz) * 0.1 + 0.01, wz)
+          _dummy.rotation.set(0, 0, 0)
+          _dummy.scale.set(1, 1, 1)
+          _dummy.updateMatrix()
+          mesh.setMatrixAt(idx++, _dummy.matrix)
+        }
       }
-    }
-    meshRef.current!.instanceMatrix.needsUpdate = true
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meshRef.current, map, roadCount])
+      mesh.instanceMatrix.needsUpdate = true
+    },
+    [map, roadCount]
+  )
 
   if (roadCount === 0) return null
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, roadCount]} receiveShadow>
+    <instancedMesh ref={setupRoads} args={[undefined, undefined, roadCount]} receiveShadow>
       <boxGeometry args={[0.96, 0.05, 0.96]} />
       <meshLambertMaterial color={0x3a3d42} />
     </instancedMesh>
@@ -251,7 +250,7 @@ const Roads = memo(function Roads({ map }: { map: MapTile[][] }) {
 })
 
 // ═══════════════════════════════════════════════════
-// BUILDINGS - static groups, memoized
+// BUILDINGS - declarative groups
 // ═══════════════════════════════════════════════════
 const Buildings = memo(function Buildings({ map, phase }: { map: MapTile[][]; phase: Phase }) {
   const buildings = useMemo(() => {
@@ -328,11 +327,12 @@ const Buildings = memo(function Buildings({ map, phase }: { map: MapTile[][]; ph
 })
 
 // ═══════════════════════════════════════════════════
-// TREES - instanced for performance
+// TREES - instanced with callback refs
 // ═══════════════════════════════════════════════════
 const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
   const trunkRef = useRef<THREE.InstancedMesh>(null)
   const canopyRef = useRef<THREE.InstancedMesh>(null)
+  const [ready, setReady] = useState(false)
   const season = useMemo(() => getMichiganSeason(), [])
 
   const treeData = useMemo(() => {
@@ -362,39 +362,37 @@ const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
     return list
   }, [map, season])
 
-  useMemo(() => {
+  useEffect(() => {
     if (!trunkRef.current || !canopyRef.current || treeData.length === 0) return
-    const dummy = new THREE.Object3D()
     const canopyColors = new Float32Array(treeData.length * 3)
-    const c = new THREE.Color()
 
     treeData.forEach((t, i) => {
-      dummy.position.set(t.x, t.baseY + t.trunkH / 2, t.z)
-      dummy.rotation.set(0, t.rotY, 0)
-      dummy.scale.set(1, 1, 1)
-      dummy.updateMatrix()
-      trunkRef.current!.setMatrixAt(i, dummy.matrix)
+      _dummy.position.set(t.x, t.baseY + t.trunkH / 2, t.z)
+      _dummy.rotation.set(0, t.rotY, 0)
+      _dummy.scale.set(1, 1, 1)
+      _dummy.updateMatrix()
+      trunkRef.current!.setMatrixAt(i, _dummy.matrix)
 
       const cw = t.canopyScale
-      dummy.position.set(t.x, t.baseY + t.trunkH + cw * 0.4, t.z)
-      dummy.scale.set(cw * 2, cw * 1.2, cw * 2)
-      dummy.updateMatrix()
-      canopyRef.current!.setMatrixAt(i, dummy.matrix)
+      _dummy.position.set(t.x, t.baseY + t.trunkH + cw * 0.4, t.z)
+      _dummy.scale.set(cw * 2, cw * 1.2, cw * 2)
+      _dummy.updateMatrix()
+      canopyRef.current!.setMatrixAt(i, _dummy.matrix)
 
-      c.setHex(t.color)
-      canopyColors[i * 3] = c.r
-      canopyColors[i * 3 + 1] = c.g
-      canopyColors[i * 3 + 2] = c.b
+      _color.setHex(t.color)
+      canopyColors[i * 3] = _color.r
+      canopyColors[i * 3 + 1] = _color.g
+      canopyColors[i * 3 + 2] = _color.b
     })
     trunkRef.current!.instanceMatrix.needsUpdate = true
     canopyRef.current!.instanceMatrix.needsUpdate = true
     canopyRef.current!.geometry.setAttribute("color", new THREE.InstancedBufferAttribute(canopyColors, 3))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trunkRef.current, canopyRef.current, treeData])
+    setReady(true)
+  }, [treeData])
 
   if (treeData.length === 0) return null
   return (
-    <>
+    <group visible={ready}>
       <instancedMesh ref={trunkRef} args={[undefined, undefined, treeData.length]} castShadow>
         <cylinderGeometry args={[0.018, 0.03, 0.5, 4]} />
         <meshLambertMaterial color={0x5a4028} />
@@ -403,7 +401,7 @@ const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
         <dodecahedronGeometry args={[0.5, 0]} />
         <meshLambertMaterial vertexColors />
       </instancedMesh>
-    </>
+    </group>
   )
 })
 
@@ -412,9 +410,10 @@ const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
 // ═══════════════════════════════════════════════════
 const Water = memo(function Water({ map }: { map: MapTile[][] }) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
+  const [ready, setReady] = useState(false)
 
   const waterTiles = useMemo(() => {
-    const list: WaterData[] = []
+    const list: WaterTile[] = []
     let idx = 0
     for (let y = 0; y < MAP; y++)
       for (let x = 0; x < MAP; x++)
@@ -422,30 +421,42 @@ const Water = memo(function Water({ map }: { map: MapTile[][] }) {
     return list
   }, [map])
 
-  const dummy = useMemo(() => new THREE.Object3D(), [])
+  useEffect(() => {
+    if (!meshRef.current || waterTiles.length === 0) return
+    for (const wt of waterTiles) {
+      _dummy.position.set(wt.x - HALF + 0.5, -0.06, wt.z - HALF + 0.5)
+      _dummy.rotation.set(0, 0, 0)
+      _dummy.scale.set(1, 1, 1)
+      _dummy.updateMatrix()
+      meshRef.current.setMatrixAt(wt.idx, _dummy.matrix)
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true
+    setReady(true)
+  }, [waterTiles])
 
-  useFrame(({ clock }, delta) => {
+  const frameCount = useRef(0)
+  useFrame(({ clock }) => {
+    frameCount.current++
+    if (frameCount.current % 6 !== 0) return
     if (!meshRef.current || waterTiles.length === 0) return
     const t = clock.getElapsedTime()
-    // Only update every ~6 frames worth of time
-    if (Math.floor(t * 5) % 3 !== 0) return
     for (const wt of waterTiles) {
-      dummy.position.set(
+      _dummy.position.set(
         wt.x - HALF + 0.5,
         -0.06 + Math.sin(t * 0.4 + wt.x * 0.25 + wt.z * 0.2) * 0.01,
         wt.z - HALF + 0.5,
       )
-      dummy.rotation.set(0, 0, 0)
-      dummy.scale.set(1, 1, 1)
-      dummy.updateMatrix()
-      meshRef.current!.setMatrixAt(wt.idx, dummy.matrix)
+      _dummy.rotation.set(0, 0, 0)
+      _dummy.scale.set(1, 1, 1)
+      _dummy.updateMatrix()
+      meshRef.current!.setMatrixAt(wt.idx, _dummy.matrix)
     }
     meshRef.current!.instanceMatrix.needsUpdate = true
   })
 
   if (waterTiles.length === 0) return null
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, waterTiles.length]}>
+    <instancedMesh ref={meshRef} args={[undefined, undefined, waterTiles.length]} visible={ready}>
       <boxGeometry args={[1.01, 0.08, 1.01]} />
       <meshLambertMaterial color={0x2a5878} transparent opacity={0.82} />
     </instancedMesh>
@@ -559,11 +570,12 @@ const WeatherParticles = memo(function WeatherParticles() {
 })
 
 // ═══════════════════════════════════════════════════
-// STREETLIGHTS - instanced
+// STREETLIGHTS - instanced with callback refs
 // ═══════════════════════════════════════════════════
 const Streetlights = memo(function Streetlights({ map, phase }: { map: MapTile[][]; phase: Phase }) {
   const poleRef = useRef<THREE.InstancedMesh>(null)
   const lampRef = useRef<THREE.InstancedMesh>(null)
+  const [ready, setReady] = useState(false)
   const isNight = phase === "night" || phase === "evening"
 
   const slData = useMemo(() => {
@@ -578,27 +590,26 @@ const Streetlights = memo(function Streetlights({ map, phase }: { map: MapTile[]
     return list
   }, [map])
 
-  useMemo(() => {
+  useEffect(() => {
     if (!poleRef.current || !lampRef.current || slData.length === 0) return
-    const dummy = new THREE.Object3D()
     slData.forEach((sl, i) => {
-      dummy.position.set(sl.wx, sl.baseY, sl.wz)
-      dummy.rotation.set(0, 0, 0)
-      dummy.scale.set(1, 1, 1)
-      dummy.updateMatrix()
-      poleRef.current!.setMatrixAt(i, dummy.matrix)
-      dummy.position.set(sl.wx - 0.1, sl.baseY + 0.42, sl.wz)
-      dummy.updateMatrix()
-      lampRef.current!.setMatrixAt(i, dummy.matrix)
+      _dummy.position.set(sl.wx, sl.baseY, sl.wz)
+      _dummy.rotation.set(0, 0, 0)
+      _dummy.scale.set(1, 1, 1)
+      _dummy.updateMatrix()
+      poleRef.current!.setMatrixAt(i, _dummy.matrix)
+      _dummy.position.set(sl.wx - 0.1, sl.baseY + 0.42, sl.wz)
+      _dummy.updateMatrix()
+      lampRef.current!.setMatrixAt(i, _dummy.matrix)
     })
     poleRef.current!.instanceMatrix.needsUpdate = true
     lampRef.current!.instanceMatrix.needsUpdate = true
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poleRef.current, lampRef.current, slData])
+    setReady(true)
+  }, [slData])
 
   if (slData.length === 0) return null
   return (
-    <>
+    <group visible={ready}>
       <instancedMesh ref={poleRef} args={[undefined, undefined, slData.length]}>
         <cylinderGeometry args={[0.012, 0.015, 0.8, 4]} />
         <meshLambertMaterial color={0x505558} />
@@ -607,7 +618,7 @@ const Streetlights = memo(function Streetlights({ map, phase }: { map: MapTile[]
         <boxGeometry args={[0.06, 0.02, 0.035]} />
         <meshLambertMaterial color={0xe0ddd5} emissive={0xffd888} emissiveIntensity={isNight ? 0.8 : 0} />
       </instancedMesh>
-    </>
+    </group>
   )
 })
 
@@ -675,16 +686,11 @@ export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick
           antialias: true,
           alpha: false,
           powerPreference: "high-performance",
-          toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.1,
-          outputColorSpace: THREE.SRGBColorSpace,
         }}
-        frameloop="demand"
-        performance={{ min: 0.5 }}
-        onCreated={({ gl, invalidate }) => {
-          // Continuously invalidate to keep the animation loop going
-          const loop = () => { invalidate(); requestAnimationFrame(loop) }
-          loop()
+        onCreated={({ gl }) => {
+          gl.toneMapping = THREE.ACESFilmicToneMapping
+          gl.toneMappingExposure = 1.1
+          gl.outputColorSpace = THREE.SRGBColorSpace
         }}
       >
         <CityScene map={map} agents={agents} phase={phase} onAgentClick={onAgentClick} />
