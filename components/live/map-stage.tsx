@@ -385,6 +385,113 @@ const Buildings = memo(function Buildings({ map, phase }: { map: MapTile[][]; ph
 })
 
 // ═══════════════════════════════════════════════════
+// CONSTRUCTION SITES - scaffolding + partial builds
+// ═══════════════════════════════════════════════════
+const ConstructionSites = memo(function ConstructionSites({ map, phase }: { map: MapTile[][]; phase: Phase }) {
+  const sites = useMemo(() => {
+    const list: { x: number; z: number; baseY: number; progress: number; buildingType: string }[] = []
+    for (let y = 0; y < MAP; y++) {
+      for (let x = 0; x < MAP; x++) {
+        const tile = map[y]?.[x]
+        if (!tile?.construction) continue
+        const wx = x - HALF + 0.5
+        const wz = y - HALF + 0.5
+        list.push({
+          x: wx, z: wz,
+          baseY: hillH(wx, wz) * 0.1,
+          progress: tile.construction.progress,
+          buildingType: tile.construction.buildingType,
+        })
+      }
+    }
+    return list
+  }, [map])
+
+  if (sites.length === 0) return null
+
+  return (
+    <group>
+      {sites.map((s, i) => {
+        const pct = s.progress / 100
+        const targetH = (B[s.buildingType as keyof typeof B]?.h ?? 0.8) * pct
+        const fx = B[s.buildingType as keyof typeof B]?.fx ?? 0.5
+        const fz = B[s.buildingType as keyof typeof B]?.fz ?? 0.5
+        const isNight = phase === "night" || phase === "evening"
+
+        return (
+          <group key={i} position={[s.x, s.baseY, s.z]}>
+            {/* Foundation slab - always visible */}
+            <mesh position={[0, 0.015, 0]} receiveShadow>
+              <boxGeometry args={[fx + 0.15, 0.03, fz + 0.15]} />
+              <meshStandardMaterial color={0x8b7355} roughness={0.95} metalness={0.05} />
+            </mesh>
+
+            {/* Partial walls growing up */}
+            {pct > 0.15 && (
+              <mesh position={[0, Math.max(0.04, targetH / 2), 0]} castShadow receiveShadow>
+                <boxGeometry args={[fx * 0.95, Math.max(0.05, targetH), fz * 0.95]} />
+                <meshStandardMaterial
+                  color={0xc4a882}
+                  roughness={0.9}
+                  metalness={0}
+                  transparent
+                  opacity={0.6 + pct * 0.4}
+                />
+              </mesh>
+            )}
+
+            {/* Scaffolding poles (4 corners) */}
+            {[[-1, -1], [-1, 1], [1, -1], [1, 1]].map(([dx, dz], j) => (
+              <mesh key={j} position={[dx * fx * 0.55, targetH * 0.6 + 0.05, dz * fz * 0.55]} castShadow>
+                <cylinderGeometry args={[0.015, 0.015, targetH + 0.3, 4]} />
+                <meshStandardMaterial color={0x8b6914} roughness={0.8} metalness={0.2} />
+              </mesh>
+            ))}
+
+            {/* Horizontal scaffold bars */}
+            {pct > 0.3 && (
+              <>
+                <mesh position={[0, targetH * 0.4, fz * 0.55]} castShadow>
+                  <boxGeometry args={[fx * 1.1, 0.02, 0.02]} />
+                  <meshStandardMaterial color={0x8b6914} roughness={0.8} metalness={0.2} />
+                </mesh>
+                <mesh position={[0, targetH * 0.4, -fz * 0.55]} castShadow>
+                  <boxGeometry args={[fx * 1.1, 0.02, 0.02]} />
+                  <meshStandardMaterial color={0x8b6914} roughness={0.8} metalness={0.2} />
+                </mesh>
+              </>
+            )}
+            {pct > 0.6 && (
+              <>
+                <mesh position={[fx * 0.55, targetH * 0.7, 0]} castShadow>
+                  <boxGeometry args={[0.02, 0.02, fz * 1.1]} />
+                  <meshStandardMaterial color={0x8b6914} roughness={0.8} metalness={0.2} />
+                </mesh>
+                <mesh position={[-fx * 0.55, targetH * 0.7, 0]} castShadow>
+                  <boxGeometry args={[0.02, 0.02, fz * 1.1]} />
+                  <meshStandardMaterial color={0x8b6914} roughness={0.8} metalness={0.2} />
+                </mesh>
+              </>
+            )}
+
+            {/* Work light at night */}
+            {isNight && pct < 1 && (
+              <pointLight
+                position={[0, targetH + 0.2, 0]}
+                color={0xffa040}
+                intensity={0.3}
+                distance={2}
+                castShadow={false}
+              />
+            )}
+          </group>
+        )
+      })}
+    </group>
+  )
+})
+
+// ═══════════════════════════════════════════════════
 // TREES - instanced PBR
 // ═══════════════════════════════════════════════════
 const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
@@ -720,8 +827,9 @@ function CityScene({ map, agents, phase, onAgentClick }: {
       />
       <Terrain map={map} />
       <Roads map={map} />
-      <Buildings map={map} phase={phase} />
-      <Trees map={map} />
+  <Buildings map={map} phase={phase} />
+  <ConstructionSites map={map} phase={phase} />
+  <Trees map={map} />
       <WaterSurface map={map} />
       <Streetlights map={map} phase={phase} />
       <AgentLayer agents={agents} phase={phase} onAgentClick={onAgentClick} />
@@ -743,7 +851,6 @@ interface MapStageProps {
 }
 
 export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick }: MapStageProps) {
-  console.log("[v0] MapStage rendering, map:", map?.length, "agents:", agents?.length, "phase:", phase)
   return (
     <div className="relative flex-1 w-full h-full" style={{ minHeight: 400 }}>
       <Canvas

@@ -357,5 +357,7 @@ export function createInitialState(): WorldState {
     councilActive: false,
     councilAnnouncement: null,
     lastProcessedHour: realHour,
+    constructionQueue: [],
+    completedProjects: [],
   }
 }
