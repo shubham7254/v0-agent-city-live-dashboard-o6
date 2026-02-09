@@ -26,7 +26,7 @@ function formatSimHour(hour: number): string {
 }
 
 function useRealClock() {
-  const [time, setTime] = useState("")
+  const [time, setTime] = useState<string | null>(null)
   useEffect(() => {
     const update = () =>
       setTime(
@@ -107,7 +107,7 @@ export function BroadcastBar({
         </div>
         <div className="flex items-center gap-2 text-xs bg-secondary/60 rounded px-2.5 py-1">
           <div className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] animate-pulse" />
-          <span className="font-mono font-bold text-foreground tracking-wider">{realClock}</span>
+          <span className="font-mono font-bold text-foreground tracking-wider">{realClock ?? "--:--:--"}</span>
         </div>
         <div className="flex items-center gap-1.5 text-xs">
           {PHASE_ICONS[phase]}
@@ -140,8 +140,8 @@ export function BroadcastBar({
             {sseConnected ? "Connected" : "Connecting"}
           </span>
         </div>
-        {lastUpdate && (
-          <span className="font-mono text-xs text-muted-foreground/50">
+        {lastUpdate && realClock && (
+          <span className="font-mono text-xs text-muted-foreground/50" suppressHydrationWarning>
             {new Date(lastUpdate).toLocaleTimeString()}
           </span>
         )}

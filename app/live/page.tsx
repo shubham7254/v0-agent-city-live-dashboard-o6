@@ -60,7 +60,7 @@ export default function LivePage() {
   const [leftPanelOpen, setLeftPanelOpen] = useState(false)
   const [rightPanelOpen, setRightPanelOpen] = useState(false)
   const [councilOpen, setCouncilOpen] = useState(false)
-  const [realClock, setRealClock] = useState(formatRealTime())
+  const [realClock, setRealClock] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
 
   const handleAgentClick = useCallback((agentId: string) => {
@@ -374,7 +374,7 @@ export default function LivePage() {
               <div className="glass-panel rounded-md px-3 py-1.5 flex items-center gap-2">
                 <div className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--success))] animate-pulse" />
                 <span className="font-mono text-xs font-bold text-foreground">
-                  {realClock}
+                  {realClock ?? "--:--"}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground uppercase">
                   real time
