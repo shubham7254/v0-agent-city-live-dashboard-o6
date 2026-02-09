@@ -2,7 +2,7 @@
 
 import { useRef, useMemo, useCallback, useEffect, memo, useState } from "react"
 import { Canvas, useFrame, useThree } from "@react-three/fiber"
-import { OrbitControls } from "@react-three/drei"
+import { OrbitControls, Environment, Sky, MeshReflectorMaterial } from "@react-three/drei"
 import * as THREE from "three"
 import type { Agent, MapTile, Phase, WorldMetrics, CameraMode } from "@/lib/types"
 
@@ -54,102 +54,121 @@ function getBiomeColor(biome: string, season: Season): [number, number, number] 
 
 function phaseLight(p: Phase) {
   switch (p) {
-    case "morning": return { sun: 0.75, color: 0xffecd2, amb: 0.45, sky: 0x9cb8cf, fog: 0xc8d8e4, fogN: 20, fogF: 55 }
-    case "day":     return { sun: 1.0, color: 0xfff5e8, amb: 0.55, sky: 0x8aaccc, fog: 0xb8ccd8, fogN: 25, fogF: 65 }
-    case "evening": return { sun: 0.5, color: 0xe07848, amb: 0.35, sky: 0x2a2040, fog: 0x3a2840, fogN: 18, fogF: 50 }
-    case "night":   return { sun: 0.15, color: 0x4466aa, amb: 0.25, sky: 0x0a1020, fog: 0x101828, fogN: 12, fogF: 45 }
+    case "morning": return { sun: 1.2, color: 0xffe4c4, amb: 0.5, sky: 0xb8d0e8, fogColor: 0xd8e4ee, fogN: 30, fogF: 90, sunAz: 0.25, sunEl: 15, skyTurb: 8 }
+    case "day":     return { sun: 1.8, color: 0xfff8f0, amb: 0.65, sky: 0xa8c8e8, fogColor: 0xc8dce8, fogN: 40, fogF: 100, sunAz: 0.5, sunEl: 45, skyTurb: 10 }
+    case "evening": return { sun: 0.8, color: 0xe07040, amb: 0.35, sky: 0x2a2040, fogColor: 0x3a2840, fogN: 20, fogF: 70, sunAz: 0.75, sunEl: 5, skyTurb: 6 }
+    case "night":   return { sun: 0.05, color: 0x4466aa, amb: 0.18, sky: 0x060a18, fogColor: 0x0a1020, fogN: 15, fogF: 60, sunAz: 1.0, sunEl: -10, skyTurb: 3 }
   }
 }
 
 // Building configs
-interface BC { wall: number; roof: number; h: number; fx: number; fz: number; flat: boolean; win: boolean; door: boolean }
+interface BC { wall: number; roof: number; h: number; fx: number; fz: number; flat: boolean; win: boolean; door: boolean; roughness: number; metalness: number }
 const B: Record<string, BC> = {
-  house:      { wall: 0xe8e2d8, roof: 0x4a5058, h: 1.1, fx: 0.52, fz: 0.44, flat: false, win: true, door: true },
-  farm:       { wall: 0x7a9838, roof: 0x5a7828, h: 0.06, fx: 0.86, fz: 0.86, flat: true, win: false, door: false },
-  council:    { wall: 0xf0ece4, roof: 0x3a4248, h: 2.2, fx: 0.76, fz: 0.66, flat: true, win: true, door: true },
-  watchtower: { wall: 0x706860, roof: 0x4a4440, h: 2.5, fx: 0.28, fz: 0.28, flat: true, win: true, door: false },
-  storehouse: { wall: 0xd0c8b8, roof: 0x585048, h: 1.3, fx: 0.64, fz: 0.48, flat: false, win: false, door: true },
-  well:       { wall: 0x8a9090, roof: 0x607080, h: 0.3, fx: 0.26, fz: 0.26, flat: true, win: false, door: false },
-  wall:       { wall: 0x686060, roof: 0x585050, h: 1.0, fx: 0.88, fz: 0.2, flat: true, win: false, door: false },
-  shop:       { wall: 0xf2ece2, roof: 0xc06030, h: 1.3, fx: 0.52, fz: 0.46, flat: true, win: true, door: true },
-  market:     { wall: 0xe8dcc8, roof: 0xb04820, h: 0.85, fx: 0.68, fz: 0.56, flat: true, win: false, door: false },
-  hospital:   { wall: 0xf5f2ee, roof: 0x505860, h: 2.0, fx: 0.72, fz: 0.62, flat: true, win: true, door: true },
-  school:     { wall: 0xe0d0b8, roof: 0x4a3828, h: 1.5, fx: 0.66, fz: 0.54, flat: false, win: true, door: true },
-  college:    { wall: 0xd8d4cc, roof: 0x3a4048, h: 2.4, fx: 0.78, fz: 0.68, flat: true, win: true, door: true },
-  inn:        { wall: 0xc8a878, roof: 0x3a3028, h: 1.4, fx: 0.56, fz: 0.48, flat: false, win: true, door: true },
-  workshop:   { wall: 0x686460, roof: 0x3a3835, h: 1.5, fx: 0.58, fz: 0.48, flat: true, win: true, door: true },
+  house:      { wall: 0xf0ebe2, roof: 0x5a6068, h: 1.1, fx: 0.52, fz: 0.44, flat: false, win: true, door: true, roughness: 0.85, metalness: 0.0 },
+  farm:       { wall: 0x7a9838, roof: 0x5a7828, h: 0.06, fx: 0.86, fz: 0.86, flat: true, win: false, door: false, roughness: 0.95, metalness: 0.0 },
+  council:    { wall: 0xf5f0e8, roof: 0x3a4450, h: 2.2, fx: 0.76, fz: 0.66, flat: true, win: true, door: true, roughness: 0.6, metalness: 0.05 },
+  watchtower: { wall: 0x807870, roof: 0x504a46, h: 2.5, fx: 0.28, fz: 0.28, flat: true, win: true, door: false, roughness: 0.9, metalness: 0.1 },
+  storehouse: { wall: 0xd8d0c0, roof: 0x605850, h: 1.3, fx: 0.64, fz: 0.48, flat: false, win: false, door: true, roughness: 0.8, metalness: 0.0 },
+  well:       { wall: 0x909898, roof: 0x687888, h: 0.3, fx: 0.26, fz: 0.26, flat: true, win: false, door: false, roughness: 0.75, metalness: 0.15 },
+  wall:       { wall: 0x706860, roof: 0x605858, h: 1.0, fx: 0.88, fz: 0.2, flat: true, win: false, door: false, roughness: 0.9, metalness: 0.05 },
+  shop:       { wall: 0xf5f0e6, roof: 0xd06838, h: 1.3, fx: 0.52, fz: 0.46, flat: true, win: true, door: true, roughness: 0.7, metalness: 0.0 },
+  market:     { wall: 0xf0e4d0, roof: 0xc05028, h: 0.85, fx: 0.68, fz: 0.56, flat: true, win: false, door: false, roughness: 0.8, metalness: 0.0 },
+  hospital:   { wall: 0xfaf8f5, roof: 0x586068, h: 2.0, fx: 0.72, fz: 0.62, flat: true, win: true, door: true, roughness: 0.5, metalness: 0.05 },
+  school:     { wall: 0xe8d8c0, roof: 0x503828, h: 1.5, fx: 0.66, fz: 0.54, flat: false, win: true, door: true, roughness: 0.8, metalness: 0.0 },
+  college:    { wall: 0xe0dcd4, roof: 0x404850, h: 2.4, fx: 0.78, fz: 0.68, flat: true, win: true, door: true, roughness: 0.55, metalness: 0.05 },
+  inn:        { wall: 0xd0b080, roof: 0x403028, h: 1.4, fx: 0.56, fz: 0.48, flat: false, win: true, door: true, roughness: 0.85, metalness: 0.0 },
+  workshop:   { wall: 0x706c68, roof: 0x403e3a, h: 1.5, fx: 0.58, fz: 0.48, flat: true, win: true, door: true, roughness: 0.9, metalness: 0.15 },
 }
 
-// Pre-computed data types
 interface BuildingData { x: number; z: number; baseY: number; cfg: BC; h: number; fx: number; fz: number; rng: number }
 interface TreeData { x: number; z: number; baseY: number; trunkH: number; canopyScale: number; color: number; rotY: number }
 interface WaterTile { x: number; z: number; idx: number }
 
-// Shared geometry/material refs (created once)
 const _dummy = new THREE.Object3D()
 const _color = new THREE.Color()
-const _bgColor = new THREE.Color()
 
 // ═══════════════════════════════════════════════════
-// SCENE LIGHTING
+// SCENE LIGHTING + ATMOSPHERE
 // ═══════════════════════════════════════════════════
 const SceneLighting = memo(function SceneLighting({ phase }: { phase: Phase }) {
   const sunRef = useRef<THREE.DirectionalLight>(null)
   const ambRef = useRef<THREE.AmbientLight>(null)
   const hemiRef = useRef<THREE.HemisphereLight>(null)
-  const moonRef = useRef<THREE.DirectionalLight>(null)
+  const fillRef = useRef<THREE.DirectionalLight>(null)
   const { scene } = useThree()
 
   useFrame(() => {
-    const light = phaseLight(phase)
+    const L = phaseLight(phase)
     if (sunRef.current) {
-      sunRef.current.intensity = light.sun
-      sunRef.current.color.set(light.color)
+      sunRef.current.intensity = L.sun
+      sunRef.current.color.set(L.color)
     }
-    if (ambRef.current) ambRef.current.intensity = light.amb
+    if (ambRef.current) ambRef.current.intensity = L.amb
     if (hemiRef.current) {
-      hemiRef.current.intensity = phase === "night" ? 0.12 : 0.2
-      hemiRef.current.color.set(phase === "night" ? 0x283858 : 0xa8c0d8)
-      hemiRef.current.groundColor.set(phase === "night" ? 0x141c28 : 0x607040)
+      hemiRef.current.intensity = phase === "night" ? 0.08 : 0.25
+      hemiRef.current.color.set(phase === "night" ? 0x283858 : 0xb0d0f0)
+      hemiRef.current.groundColor.set(phase === "night" ? 0x0a1018 : 0x506830)
     }
-    if (moonRef.current) moonRef.current.intensity = phase === "night" ? 0.4 : phase === "evening" ? 0.2 : 0
-    _bgColor.set(light.sky)
-    scene.background = _bgColor
+    if (fillRef.current) fillRef.current.intensity = phase === "night" ? 0.3 : phase === "evening" ? 0.15 : 0.1
     if (scene.fog instanceof THREE.Fog) {
-      scene.fog.color.set(light.fog)
-      scene.fog.near = light.fogN
-      scene.fog.far = light.fogF
+      scene.fog.color.set(L.fogColor)
+      scene.fog.near = L.fogN
+      scene.fog.far = L.fogF
     }
   })
 
   return (
     <>
-      <ambientLight ref={ambRef} intensity={0.55} color={0xc0c8d0} />
+      <ambientLight ref={ambRef} intensity={0.65} color={0xc8d0d8} />
+      <hemisphereLight ref={hemiRef} args={[0xb0d0f0, 0x506830, 0.25]} />
+      {/* Main sun */}
       <directionalLight
         ref={sunRef}
-        position={[18, 30, 14]}
-        intensity={1.0}
-        color={0xfff5e8}
+        position={[22, 35, 18]}
+        intensity={1.8}
+        color={0xfff8f0}
         castShadow
-        shadow-mapSize-width={512}
-        shadow-mapSize-height={512}
-        shadow-camera-far={80}
-        shadow-camera-left={-35}
-        shadow-camera-right={35}
-        shadow-camera-top={35}
-        shadow-camera-bottom={-35}
-        shadow-bias={-0.0004}
-        shadow-normalBias={0.02}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-far={100}
+        shadow-camera-left={-40}
+        shadow-camera-right={40}
+        shadow-camera-top={40}
+        shadow-camera-bottom={-40}
+        shadow-bias={-0.0002}
+        shadow-normalBias={0.04}
       />
-      <hemisphereLight ref={hemiRef} args={[0xa8c0d8, 0x607040, 0.2]} />
-      <directionalLight ref={moonRef} position={[-10, 25, -8]} intensity={0} color={0x6688cc} />
-      <fog attach="fog" args={[0xb8ccd8, 25, 65]} />
+      {/* Back fill light for depth */}
+      <directionalLight ref={fillRef} position={[-15, 20, -12]} intensity={0.1} color={0x6080b0} />
+      {/* Fog for atmosphere */}
+      <fog attach="fog" args={[0xc8dce8, 40, 100]} />
     </>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// TERRAIN - instanced with callback ref setup
+// DYNAMIC SKY
+// ═══════════════════════════════════════════════════
+const DynamicSky = memo(function DynamicSky({ phase }: { phase: Phase }) {
+  const L = phaseLight(phase)
+  return (
+    <Sky
+      distance={450000}
+      sunPosition={[
+        Math.cos(L.sunAz * Math.PI * 2) * 100,
+        Math.sin((L.sunEl / 90) * Math.PI / 2) * 100,
+        Math.sin(L.sunAz * Math.PI * 2) * 100,
+      ]}
+      turbidity={L.skyTurb}
+      rayleigh={phase === "night" ? 0.1 : phase === "evening" ? 2.5 : 1.5}
+      mieCoefficient={phase === "evening" ? 0.01 : 0.005}
+      mieDirectionalG={phase === "evening" ? 0.95 : 0.8}
+    />
+  )
+})
+
+// ═══════════════════════════════════════════════════
+// TERRAIN - instanced PBR
 // ═══════════════════════════════════════════════════
 const Terrain = memo(function Terrain({ map }: { map: MapTile[][] }) {
   const season = useMemo(() => getMichiganSeason(), [])
@@ -195,20 +214,22 @@ const Terrain = memo(function Terrain({ map }: { map: MapTile[][] }) {
 
   return (
     <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.2, 0]} receiveShadow>
-        <planeGeometry args={[200, 200]} />
-        <meshLambertMaterial color={0x4a6830} />
+      {/* Ground plane */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.25, 0]} receiveShadow>
+        <planeGeometry args={[300, 300]} />
+        <meshStandardMaterial color={0x4a6830} roughness={0.95} metalness={0} />
       </mesh>
+      {/* Tile grid */}
       <instancedMesh ref={setupTerrain} args={[undefined, undefined, tileCount]} receiveShadow>
         <boxGeometry args={[1, 0.12, 1]} />
-        <meshLambertMaterial vertexColors />
+        <meshStandardMaterial vertexColors roughness={0.88} metalness={0} />
       </instancedMesh>
     </>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// ROADS - instanced with callback ref
+// ROADS - PBR with subtle sheen
 // ═══════════════════════════════════════════════════
 const Roads = memo(function Roads({ map }: { map: MapTile[][] }) {
   const roadCount = useMemo(() => {
@@ -244,13 +265,13 @@ const Roads = memo(function Roads({ map }: { map: MapTile[][] }) {
   return (
     <instancedMesh ref={setupRoads} args={[undefined, undefined, roadCount]} receiveShadow>
       <boxGeometry args={[0.96, 0.05, 0.96]} />
-      <meshLambertMaterial color={0x3a3d42} />
+      <meshStandardMaterial color={0x3a3d42} roughness={0.75} metalness={0.05} />
     </instancedMesh>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// BUILDINGS - declarative groups
+// BUILDINGS - PBR with window glow + detail
 // ═══════════════════════════════════════════════════
 const Buildings = memo(function Buildings({ map, phase }: { map: MapTile[][]; phase: Phase }) {
   const buildings = useMemo(() => {
@@ -279,55 +300,92 @@ const Buildings = memo(function Buildings({ map, phase }: { map: MapTile[][]; ph
   }, [map])
 
   const isNight = phase === "night" || phase === "evening"
-  const emissive = isNight ? 0.6 : 0
+  const winEmissiveIntensity = isNight ? 1.2 : 0
 
   return (
     <group>
-      {buildings.map((b, i) => (
-        <group key={i} position={[b.x, b.baseY, b.z]}>
-          {/* Foundation */}
-          <mesh position={[0, 0.015, 0]}>
-            <boxGeometry args={[b.fx + 0.06, 0.03, b.fz + 0.06]} />
-            <meshLambertMaterial color={0xb0aaa0} />
-          </mesh>
-          {/* Walls */}
-          <mesh position={[0, b.h / 2 + 0.03, 0]} castShadow>
-            <boxGeometry args={[b.fx, b.h, b.fz]} />
-            <meshLambertMaterial color={b.cfg.wall} />
-          </mesh>
-          {/* Roof */}
-          <mesh position={[0, b.h + 0.05, 0]}>
-            <boxGeometry args={[b.fx + 0.04, 0.04, b.fz + 0.04]} />
-            <meshLambertMaterial color={b.cfg.roof} />
-          </mesh>
-          {/* Windows glow */}
-          {b.cfg.win && b.h > 0.6 && (
-            <mesh position={[0, b.h * 0.55, b.fz / 2 + 0.001]}>
-              <planeGeometry args={[b.fx * 0.6, b.h * 0.25]} />
-              <meshLambertMaterial
-                color={0x6080a0}
-                transparent
-                opacity={isNight ? 0.9 : 0.4}
-                emissive={0xffcc44}
-                emissiveIntensity={emissive}
-              />
+      {buildings.map((b, i) => {
+        const numFloors = Math.max(1, Math.floor(b.h / 0.45))
+        return (
+          <group key={i} position={[b.x, b.baseY, b.z]}>
+            {/* Foundation */}
+            <mesh position={[0, 0.02, 0]} receiveShadow>
+              <boxGeometry args={[b.fx + 0.08, 0.04, b.fz + 0.08]} />
+              <meshStandardMaterial color={0xa09888} roughness={0.95} metalness={0.05} />
             </mesh>
-          )}
-          {/* Door */}
-          {b.cfg.door && b.h > 0.4 && (
-            <mesh position={[b.rng > 0.5 ? 0.06 : -0.06, 0.13, b.fz / 2 + 0.001]}>
-              <boxGeometry args={[0.1, 0.2, 0.01]} />
-              <meshLambertMaterial color={0x3a2010} />
+            {/* Walls */}
+            <mesh position={[0, b.h / 2 + 0.04, 0]} castShadow receiveShadow>
+              <boxGeometry args={[b.fx, b.h, b.fz]} />
+              <meshStandardMaterial color={b.cfg.wall} roughness={b.cfg.roughness} metalness={b.cfg.metalness} />
             </mesh>
-          )}
-        </group>
-      ))}
+            {/* Roof */}
+            {b.cfg.flat ? (
+              <mesh position={[0, b.h + 0.06, 0]} castShadow>
+                <boxGeometry args={[b.fx + 0.06, 0.05, b.fz + 0.06]} />
+                <meshStandardMaterial color={b.cfg.roof} roughness={0.7} metalness={0.1} />
+              </mesh>
+            ) : (
+              <mesh position={[0, b.h + 0.15, 0]} rotation={[0, b.rng > 0.5 ? 0 : Math.PI / 2, 0]} castShadow>
+                <coneGeometry args={[Math.max(b.fx, b.fz) * 0.75, 0.3, 4]} />
+                <meshStandardMaterial color={b.cfg.roof} roughness={0.8} metalness={0.05} />
+              </mesh>
+            )}
+            {/* Window rows per floor */}
+            {b.cfg.win && b.h > 0.6 && Array.from({ length: numFloors }).map((_, fi) => {
+              const fy = 0.04 + (fi + 0.5) * (b.h / numFloors)
+              const winsPerRow = Math.max(1, Math.floor(b.fx / 0.18))
+              return Array.from({ length: winsPerRow }).map((_, wi) => {
+                const wxOff = (wi - (winsPerRow - 1) / 2) * 0.16
+                const litFront = hash(i * 7 + fi * 3 + wi, 42) > 0.35
+                const litBack = hash(i * 11 + fi * 5 + wi + 99, 77) > 0.4
+                return (
+                  <group key={`${fi}-${wi}`}>
+                    {/* Front window */}
+                    <mesh position={[wxOff, fy, b.fz / 2 + 0.002]}>
+                      <planeGeometry args={[0.08, 0.1]} />
+                      <meshStandardMaterial
+                        color={isNight && litFront ? 0xffd080 : 0x8aaabe}
+                        roughness={0.3}
+                        metalness={0.1}
+                        emissive={litFront ? 0xffcc44 : 0x000000}
+                        emissiveIntensity={winEmissiveIntensity}
+                        transparent={!isNight}
+                        opacity={isNight ? 1 : 0.7}
+                      />
+                    </mesh>
+                    {/* Back window */}
+                    <mesh position={[wxOff, fy, -(b.fz / 2 + 0.002)]} rotation={[0, Math.PI, 0]}>
+                      <planeGeometry args={[0.08, 0.1]} />
+                      <meshStandardMaterial
+                        color={isNight && litBack ? 0xffd080 : 0x8aaabe}
+                        roughness={0.3}
+                        metalness={0.1}
+                        emissive={litBack ? 0xffcc44 : 0x000000}
+                        emissiveIntensity={winEmissiveIntensity}
+                        transparent={!isNight}
+                        opacity={isNight ? 1 : 0.7}
+                      />
+                    </mesh>
+                  </group>
+                )
+              })
+            })}
+            {/* Door */}
+            {b.cfg.door && b.h > 0.4 && (
+              <mesh position={[b.rng > 0.5 ? 0.06 : -0.06, 0.14, b.fz / 2 + 0.002]}>
+                <planeGeometry args={[0.1, 0.22]} />
+                <meshStandardMaterial color={0x4a2810} roughness={0.9} metalness={0} />
+              </mesh>
+            )}
+          </group>
+        )
+      })}
     </group>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// TREES - instanced with callback refs
+// TREES - instanced PBR
 // ═══════════════════════════════════════════════════
 const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
   const trunkRef = useRef<THREE.InstancedMesh>(null)
@@ -394,83 +452,80 @@ const Trees = memo(function Trees({ map }: { map: MapTile[][] }) {
   return (
     <group visible={ready}>
       <instancedMesh ref={trunkRef} args={[undefined, undefined, treeData.length]} castShadow>
-        <cylinderGeometry args={[0.018, 0.03, 0.5, 4]} />
-        <meshLambertMaterial color={0x5a4028} />
+        <cylinderGeometry args={[0.02, 0.035, 0.5, 5]} />
+        <meshStandardMaterial color={0x5a4028} roughness={0.95} metalness={0} />
       </instancedMesh>
       <instancedMesh ref={canopyRef} args={[undefined, undefined, treeData.length]} castShadow>
-        <dodecahedronGeometry args={[0.5, 0]} />
-        <meshLambertMaterial vertexColors />
+        <dodecahedronGeometry args={[0.5, 1]} />
+        <meshStandardMaterial vertexColors roughness={0.85} metalness={0} />
       </instancedMesh>
     </group>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// WATER - animated instanced mesh
+// WATER - reflective
 // ═══════════════════════════════════════════════════
-const Water = memo(function Water({ map }: { map: MapTile[][] }) {
-  const meshRef = useRef<THREE.InstancedMesh>(null)
-  const [ready, setReady] = useState(false)
+const WaterSurface = memo(function WaterSurface({ map }: { map: MapTile[][] }) {
+  const meshRef = useRef<THREE.Mesh>(null)
 
-  const waterTiles = useMemo(() => {
-    const list: WaterTile[] = []
-    let idx = 0
+  const { minX, maxX, minZ, maxZ, hasWater } = useMemo(() => {
+    let mnX = MAP, mxX = 0, mnZ = MAP, mxZ = 0, found = false
     for (let y = 0; y < MAP; y++)
       for (let x = 0; x < MAP; x++)
-        if (map[y]?.[x]?.biome === "water") list.push({ x, z: y, idx: idx++ })
-    return list
+        if (map[y]?.[x]?.biome === "water") {
+          found = true
+          mnX = Math.min(mnX, x); mxX = Math.max(mxX, x)
+          mnZ = Math.min(mnZ, y); mxZ = Math.max(mxZ, y)
+        }
+    return { minX: mnX - HALF, maxX: mxX - HALF + 1, minZ: mnZ - HALF, maxZ: mxZ - HALF + 1, hasWater: found }
   }, [map])
 
-  useEffect(() => {
-    if (!meshRef.current || waterTiles.length === 0) return
-    for (const wt of waterTiles) {
-      _dummy.position.set(wt.x - HALF + 0.5, -0.06, wt.z - HALF + 0.5)
-      _dummy.rotation.set(0, 0, 0)
-      _dummy.scale.set(1, 1, 1)
-      _dummy.updateMatrix()
-      meshRef.current.setMatrixAt(wt.idx, _dummy.matrix)
-    }
-    meshRef.current.instanceMatrix.needsUpdate = true
-    setReady(true)
-  }, [waterTiles])
-
-  const frameCount = useRef(0)
   useFrame(({ clock }) => {
-    frameCount.current++
-    if (frameCount.current % 6 !== 0) return
-    if (!meshRef.current || waterTiles.length === 0) return
-    const t = clock.getElapsedTime()
-    for (const wt of waterTiles) {
-      _dummy.position.set(
-        wt.x - HALF + 0.5,
-        -0.06 + Math.sin(t * 0.4 + wt.x * 0.25 + wt.z * 0.2) * 0.01,
-        wt.z - HALF + 0.5,
-      )
-      _dummy.rotation.set(0, 0, 0)
-      _dummy.scale.set(1, 1, 1)
-      _dummy.updateMatrix()
-      meshRef.current!.setMatrixAt(wt.idx, _dummy.matrix)
-    }
-    meshRef.current!.instanceMatrix.needsUpdate = true
+    if (!meshRef.current) return
+    meshRef.current.position.y = -0.04 + Math.sin(clock.getElapsedTime() * 0.3) * 0.01
   })
 
-  if (waterTiles.length === 0) return null
+  if (!hasWater) return null
+  const cx = (minX + maxX) / 2
+  const cz = (minZ + maxZ) / 2
+  const sx = maxX - minX + 2
+  const sz = maxZ - minZ + 2
+
   return (
-    <instancedMesh ref={meshRef} args={[undefined, undefined, waterTiles.length]} visible={ready}>
-      <boxGeometry args={[1.01, 0.08, 1.01]} />
-      <meshLambertMaterial color={0x2a5878} transparent opacity={0.82} />
-    </instancedMesh>
+    <mesh ref={meshRef} position={[cx, -0.04, cz]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <planeGeometry args={[sx, sz, 1, 1]} />
+      <MeshReflectorMaterial
+        mirror={0.4}
+        blur={[300, 100]}
+        resolution={512}
+        mixBlur={0.8}
+        mixStrength={0.6}
+        depthScale={0.4}
+        minDepthThreshold={0.4}
+        maxDepthThreshold={1}
+        color={0x1a4868}
+        metalness={0.2}
+        roughness={0.6}
+      />
+    </mesh>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// AGENTS - animated
+// AGENTS - PBR with name labels
 // ═══════════════════════════════════════════════════
-function AgentMesh({ agent, phase, onClick }: { agent: Agent; phase: Phase; onClick?: (id: string) => void }) {
+function AgentMesh({ agent, phase, onClick }: { agent: Agent; phase: Phase; onClick?: (id: string, event?: MouseEvent) => void }) {
   const groupRef = useRef<THREE.Group>(null)
   const isNight = phase === "night" || phase === "evening"
   const visible = !(agent.status === "sleeping" && isNight)
   const idNum = parseInt(agent.id.replace(/\D/g, ""), 10) || 0
+
+  // Deterministic agent color
+  const agentColor = useMemo(() => {
+    const hue = (idNum * 137.508) % 360
+    return new THREE.Color().setHSL(hue / 360, 0.5, 0.55)
+  }, [idNum])
 
   useFrame(({ clock }) => {
     if (!groupRef.current || !visible) return
@@ -481,26 +536,42 @@ function AgentMesh({ agent, phase, onClick }: { agent: Agent; phase: Phase; onCl
     groupRef.current.position.set(wx, baseY + 0.12 + Math.abs(Math.sin(t * 3 + idNum * 1.1)) * 0.015, wz)
   })
 
-  const handleClick = useCallback(() => {
-    if (onClick) onClick(agent.id)
+  const handleClick = useCallback((e: { nativeEvent?: MouseEvent; stopPropagation?: () => void }) => {
+    e.stopPropagation?.()
+    if (onClick) onClick(agent.id, e.nativeEvent instanceof MouseEvent ? e.nativeEvent : undefined)
   }, [onClick, agent.id])
 
   if (!visible) return null
   return (
     <group ref={groupRef} onClick={handleClick}>
+      {/* Body */}
       <mesh castShadow>
-        <capsuleGeometry args={[0.04, 0.08, 2, 6]} />
-        <meshLambertMaterial color={0xe0c0a0} />
+        <capsuleGeometry args={[0.04, 0.08, 3, 8]} />
+        <meshStandardMaterial color={agentColor} roughness={0.6} metalness={0.1} />
       </mesh>
-      <mesh position={[0, 0.1, 0]}>
-        <sphereGeometry args={[0.05, 6, 6]} />
-        <meshLambertMaterial color={0xe0c0a0} />
+      {/* Head */}
+      <mesh position={[0, 0.1, 0]} castShadow>
+        <sphereGeometry args={[0.05, 8, 8]} />
+        <meshStandardMaterial color={0xf0d0b0} roughness={0.7} metalness={0} />
       </mesh>
+      {/* Activity indicator glow */}
+      {agent.status === "active" && (
+        <mesh position={[0, 0.2, 0]}>
+          <sphereGeometry args={[0.015, 6, 6]} />
+          <meshStandardMaterial
+            color={0x40ff80}
+            emissive={0x40ff80}
+            emissiveIntensity={0.8}
+            transparent
+            opacity={0.8}
+          />
+        </mesh>
+      )}
     </group>
   )
 }
 
-const AgentLayer = memo(function AgentLayer({ agents, phase, onAgentClick }: { agents: Agent[]; phase: Phase; onAgentClick?: (id: string) => void }) {
+const AgentLayer = memo(function AgentLayer({ agents, phase, onAgentClick }: { agents: Agent[]; phase: Phase; onAgentClick?: (id: string, event?: MouseEvent) => void }) {
   return (
     <group>
       {agents.map((agent) => (
@@ -516,7 +587,7 @@ const AgentLayer = memo(function AgentLayer({ agents, phase, onAgentClick }: { a
 const WeatherParticles = memo(function WeatherParticles() {
   const pointsRef = useRef<THREE.Points>(null)
   const season = useMemo(() => getMichiganSeason(), [])
-  const particleCount = season === "winter" ? 200 : season === "autumn" ? 100 : 0
+  const particleCount = season === "winter" ? 300 : season === "autumn" ? 150 : 0
 
   const [positions, speeds] = useMemo(() => {
     if (particleCount === 0) return [null, null]
@@ -524,7 +595,7 @@ const WeatherParticles = memo(function WeatherParticles() {
     const spd = new Float32Array(particleCount)
     for (let i = 0; i < particleCount; i++) {
       pos[i * 3] = (Math.random() - 0.5) * MAP
-      pos[i * 3 + 1] = Math.random() * 15
+      pos[i * 3 + 1] = Math.random() * 20
       pos[i * 3 + 2] = (Math.random() - 0.5) * MAP
       spd[i] = 0.3 + Math.random() * 0.7
     }
@@ -543,7 +614,7 @@ const WeatherParticles = memo(function WeatherParticles() {
         positions[i * 3] += Math.sin(t + i * 0.1) * 0.003
       }
       if (positions[i * 3 + 1] < 0) {
-        positions[i * 3 + 1] = 12 + Math.random() * 3
+        positions[i * 3 + 1] = 15 + Math.random() * 5
         positions[i * 3] = (Math.random() - 0.5) * MAP
         positions[i * 3 + 2] = (Math.random() - 0.5) * MAP
       }
@@ -560,17 +631,18 @@ const WeatherParticles = memo(function WeatherParticles() {
       </bufferGeometry>
       <pointsMaterial
         color={season === "winter" ? 0xffffff : 0xc86830}
-        size={season === "winter" ? 0.06 : 0.08}
+        size={season === "winter" ? 0.08 : 0.1}
         transparent
-        opacity={season === "winter" ? 0.8 : 0.6}
+        opacity={season === "winter" ? 0.85 : 0.65}
         depthWrite={false}
+        sizeAttenuation
       />
     </points>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// STREETLIGHTS - instanced with callback refs
+// STREETLIGHTS - PBR with glow
 // ═══════════════════════════════════════════════════
 const Streetlights = memo(function Streetlights({ map, phase }: { map: MapTile[][]; phase: Phase }) {
   const poleRef = useRef<THREE.InstancedMesh>(null)
@@ -611,44 +683,52 @@ const Streetlights = memo(function Streetlights({ map, phase }: { map: MapTile[]
   return (
     <group visible={ready}>
       <instancedMesh ref={poleRef} args={[undefined, undefined, slData.length]}>
-        <cylinderGeometry args={[0.012, 0.015, 0.8, 4]} />
-        <meshLambertMaterial color={0x505558} />
+        <cylinderGeometry args={[0.012, 0.018, 0.8, 5]} />
+        <meshStandardMaterial color={0x505558} roughness={0.7} metalness={0.3} />
       </instancedMesh>
       <instancedMesh ref={lampRef} args={[undefined, undefined, slData.length]}>
-        <boxGeometry args={[0.06, 0.02, 0.035]} />
-        <meshLambertMaterial color={0xe0ddd5} emissive={0xffd888} emissiveIntensity={isNight ? 0.8 : 0} />
+        <sphereGeometry args={[0.035, 8, 8]} />
+        <meshStandardMaterial
+          color={isNight ? 0xffeedd : 0xe0ddd5}
+          emissive={0xffd888}
+          emissiveIntensity={isNight ? 1.5 : 0}
+          roughness={0.3}
+          metalness={0.1}
+        />
       </instancedMesh>
     </group>
   )
 })
 
 // ═══════════════════════════════════════════════════
-// MAIN SCENE (inner Canvas content)
+// MAIN SCENE
 // ═══════════════════════════════════════════════════
 function CityScene({ map, agents, phase, onAgentClick }: {
   map: MapTile[][]
   agents: Agent[]
   phase: Phase
-  onAgentClick?: (agentId: string) => void
+  onAgentClick?: (agentId: string, event?: MouseEvent) => void
 }) {
   return (
     <>
       <SceneLighting phase={phase} />
+      <DynamicSky phase={phase} />
+      <Environment preset={phase === "night" ? "night" : phase === "evening" ? "sunset" : "city"} background={false} />
       <OrbitControls
         makeDefault
         enableDamping
-        dampingFactor={0.08}
-        minZoom={3}
-        maxZoom={80}
-        maxPolarAngle={Math.PI / 2.5}
-        minPolarAngle={0.3}
+        dampingFactor={0.06}
+        minDistance={5}
+        maxDistance={80}
+        maxPolarAngle={Math.PI / 2.2}
+        minPolarAngle={0.2}
         target={[0, 0, 0]}
       />
       <Terrain map={map} />
       <Roads map={map} />
       <Buildings map={map} phase={phase} />
       <Trees map={map} />
-      <Water map={map} />
+      <WaterSurface map={map} />
       <Streetlights map={map} phase={phase} />
       <AgentLayer agents={agents} phase={phase} onAgentClick={onAgentClick} />
       <WeatherParticles />
@@ -665,7 +745,7 @@ interface MapStageProps {
   phase: Phase
   metrics: WorldMetrics | null
   cameraMode: CameraMode
-  onAgentClick?: (agentId: string) => void
+  onAgentClick?: (agentId: string, event?: MouseEvent) => void
 }
 
 export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick }: MapStageProps) {
@@ -673,15 +753,14 @@ export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick
     <div className="relative flex-1 w-full h-full" style={{ minHeight: 400 }}>
       <Canvas
         className="absolute inset-0"
-        orthographic
         camera={{
-          position: [20, 24, 20],
-          zoom: 18,
+          position: [25, 22, 25],
+          fov: 45,
           near: 0.1,
-          far: 300,
+          far: 500,
         }}
-        shadows="basic"
-        dpr={[1, 1.5]}
+        shadows
+        dpr={[1, 2]}
         gl={{
           antialias: true,
           alpha: false,
@@ -689,8 +768,9 @@ export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick
         }}
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping
-          gl.toneMappingExposure = 1.1
+          gl.toneMappingExposure = 1.2
           gl.outputColorSpace = THREE.SRGBColorSpace
+          gl.shadowMap.type = THREE.PCFSoftShadowMap
         }}
       >
         <CityScene map={map} agents={agents} phase={phase} onAgentClick={onAgentClick} />
@@ -701,7 +781,7 @@ export function MapStage({ map, agents, phase, metrics, cameraMode, onAgentClick
         {[
           { label: "Forest", color: "#3a5828" },
           { label: "Plains", color: "#5a7838" },
-          { label: "Water", color: "#2a5878" },
+          { label: "Water", color: "#1a4868" },
           { label: "Mountain", color: "#787470" },
           { label: "Desert", color: "#a89058" },
         ].map(({ label, color }) => (

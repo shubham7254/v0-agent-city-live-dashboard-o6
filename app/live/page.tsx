@@ -19,6 +19,9 @@ import { Sparkline } from "@/components/live/sparkline"
 import { SpectatorBar } from "@/components/live/spectator-bar"
 import { AmbientSound } from "@/components/live/ambient-sound"
 import { DailyNewspaper } from "@/components/live/daily-newspaper"
+import { SpectatorCommandBar } from "@/components/live/spectator-command-bar"
+import { AchievementToasts } from "@/components/live/achievement-toasts"
+import { AgentTooltip } from "@/components/live/agent-tooltip"
 import { Button } from "@/components/ui/button"
 import type { Agent, CameraMode } from "@/lib/types"
 
@@ -62,11 +65,22 @@ export default function LivePage() {
   const [councilOpen, setCouncilOpen] = useState(false)
   const [realClock, setRealClock] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
+  const [tooltipAgent, setTooltipAgent] = useState<{ agent: Agent; position: { x: number; y: number } } | null>(null)
 
   const handleAgentClick = useCallback((agentId: string) => {
     if (!state) return
     const agent = state.agents.find((a) => a.id === agentId || a.name === agentId)
     if (agent) setSelectedAgent(agent)
+  }, [state])
+
+  const handleMapAgentClick = useCallback((agentId: string, event?: MouseEvent) => {
+    if (!state) return
+    const agent = state.agents.find((a) => a.id === agentId || a.name === agentId)
+    if (agent && event) {
+      setTooltipAgent({ agent, position: { x: event.clientX, y: event.clientY } })
+    } else if (agent) {
+      setSelectedAgent(agent)
+    }
   }, [state])
 
   // Keep selectedAgent data fresh when state updates
@@ -167,6 +181,9 @@ export default function LivePage() {
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
+      {/* Achievement toasts */}
+      <AchievementToasts state={state} />
+
       {/* Background noise */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute inset-0 noise-bg" />
@@ -389,9 +406,9 @@ export default function LivePage() {
             </div>
           </div>
 
-          {/* Live event feed (floating on bottom-left) */}
+          {/* Live event feed (floating on bottom-left, raised for command bar) */}
           {state.recentEvents.length > 0 && (
-            <div className="absolute bottom-4 left-4 z-20 w-80 max-h-[200px] overflow-hidden pointer-events-none">
+            <div className="absolute bottom-16 left-4 z-20 w-80 max-h-[200px] overflow-hidden pointer-events-none">
               <div className="space-y-1">
                 <AnimatePresence initial={false}>
                   {state.recentEvents.slice(0, 6).map((evt, i) => {
@@ -439,20 +456,20 @@ export default function LivePage() {
             </div>
           )}
 
-          {/* Newspaper + Spectator (bottom-right) */}
-          <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-1.5 pointer-events-none">
+          {/* Newspaper + Spectator (bottom-right, raised for command bar) */}
+          <div className="absolute bottom-16 right-4 z-20 flex flex-col items-end gap-1.5 pointer-events-none">
             <DailyNewspaper state={state} />
             <div className="pointer-events-auto">
               <SpectatorBar />
             </div>
           </div>
 
-          {/* Council button when there's dialogue */}
+          {/* Council button when there's dialogue (raised for command bar) */}
           {state.council.dialogue.length > 0 && !councilOpen && (
             <button
               type="button"
               onClick={() => setCouncilOpen(true)}
-              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 glass-panel-strong rounded-full px-4 py-2 flex items-center gap-2 hover:border-primary/40 transition-colors"
+              className="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 glass-panel-strong rounded-full px-4 py-2 flex items-center gap-2 hover:border-primary/40 transition-colors"
             >
               <MessageSquare className="h-4 w-4 text-primary" />
               <span className="font-mono text-xs font-semibold text-foreground">
@@ -476,6 +493,21 @@ export default function LivePage() {
             )}
           </AnimatePresence>
 
+          {/* Agent tooltip from map click */}
+          <AnimatePresence>
+            {tooltipAgent && (
+              <AgentTooltip
+                agent={tooltipAgent.agent}
+                position={tooltipAgent.position}
+                onViewProfile={() => {
+                  setSelectedAgent(tooltipAgent.agent)
+                  setTooltipAgent(null)
+                }}
+                onClose={() => setTooltipAgent(null)}
+              />
+            )}
+          </AnimatePresence>
+
           {/* Map fills entire area */}
           <MapStage
             map={state.map}
@@ -483,10 +515,17 @@ export default function LivePage() {
             phase={state.phase}
             metrics={liveMetrics}
             cameraMode={cameraMode}
-            onAgentClick={handleAgentClick}
+            onAgentClick={handleMapAgentClick}
           />
         </div>
       </div>
+
+      {/* Spectator command bar at bottom center */}
+      <SpectatorCommandBar
+        state={state}
+        onAgentClick={handleAgentClick}
+        onTriggerTick={triggerTick}
+      />
     </div>
   )
 }
