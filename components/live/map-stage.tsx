@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useMemo, useEffect, useCallback } from "react"
+import { useRef, useEffect } from "react"
 import * as THREE from "three"
 import type { Agent, MapTile, Phase, WorldMetrics, CameraMode } from "@/lib/types"
 
@@ -27,10 +27,10 @@ function hillH(x: number, z: number): number {
 // Phase lighting config
 function phaseLight(p: Phase) {
   switch (p) {
-    case "morning": return { sun: 0.75, color: 0xffecd2, amb: 0.45, sky: 0x9cb8cf, fog: 0xc8d8e4, fogN: 20, fogF: 55, sh: 0.3 }
-    case "day":     return { sun: 1.0, color: 0xfff5e8, amb: 0.55, sky: 0x8aaccc, fog: 0xb8ccd8, fogN: 25, fogF: 65, sh: 0.35 }
-    case "evening": return { sun: 0.5, color: 0xe07848, amb: 0.35, sky: 0x2a2040, fog: 0x3a2840, fogN: 18, fogF: 50, sh: 0.2 }
-    case "night":   return { sun: 0.15, color: 0x4466aa, amb: 0.25, sky: 0x0a1020, fog: 0x101828, fogN: 12, fogF: 45, sh: 0.1 }
+    case "morning": return { sun: 0.75, color: 0xffecd2, amb: 0.45, sky: 0x9cb8cf, fog: 0xc8d8e4, fogN: 20, fogF: 55 }
+    case "day":     return { sun: 1.0, color: 0xfff5e8, amb: 0.55, sky: 0x8aaccc, fog: 0xb8ccd8, fogN: 25, fogF: 65 }
+    case "evening": return { sun: 0.5, color: 0xe07848, amb: 0.35, sky: 0x2a2040, fog: 0x3a2840, fogN: 18, fogF: 50 }
+    case "night":   return { sun: 0.15, color: 0x4466aa, amb: 0.25, sky: 0x0a1020, fog: 0x101828, fogN: 12, fogF: 45 }
   }
 }
 
@@ -45,14 +45,6 @@ function getMichiganSeason(): Season {
 }
 
 // Season-aware biome colors
-const BIOME_BASE: Record<string, [number, number, number]> = {
-  plains:   [0.32, 0.42, 0.22],
-  forest:   [0.22, 0.35, 0.16],
-  water:    [0.22, 0.38, 0.48],
-  mountain: [0.42, 0.40, 0.38],
-  desert:   [0.58, 0.50, 0.35],
-}
-
 const SEASON_TINT: Record<Season, Record<string, [number, number, number]>> = {
   spring: {
     plains: [0.30, 0.50, 0.24], forest: [0.22, 0.42, 0.18], water: [0.20, 0.40, 0.50],
@@ -72,7 +64,11 @@ const SEASON_TINT: Record<Season, Record<string, [number, number, number]>> = {
   },
 }
 
-// Tree foliage colors per season
+const BIOME_BASE: Record<string, [number, number, number]> = {
+  plains: [0.32, 0.42, 0.22], forest: [0.22, 0.35, 0.16], water: [0.22, 0.38, 0.48],
+  mountain: [0.42, 0.40, 0.38], desert: [0.58, 0.50, 0.35],
+}
+
 const TREE_COLORS: Record<Season, number[]> = {
   spring: [0x4a8a3a, 0x5a9a48, 0x3a7830, 0x68a858, 0x88bb55],
   summer: [0x3a6830, 0x4a7838, 0x2a5820, 0x5a8a40, 0x688a4a],
@@ -83,8 +79,6 @@ const TREE_COLORS: Record<Season, number[]> = {
 function getBiomeColor(biome: string, season: Season): [number, number, number] {
   return SEASON_TINT[season][biome] ?? BIOME_BASE[biome] ?? [0.4, 0.4, 0.4]
 }
-
-const BIOME_C = BIOME_BASE // Keep reference for backward compat
 
 // Building configs
 interface BC { wall: number; roof: number; h: number; fx: number; fz: number; flat: boolean; modern: boolean; win: boolean; door: boolean }
@@ -124,21 +118,6 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     scene: THREE.Scene
     camera: THREE.OrthographicCamera
     animId: number
-    sunLight: THREE.DirectionalLight
-    ambLight: THREE.AmbientLight
-    hemiLight: THREE.HemisphereLight
-    fog: THREE.Fog
-    agentMeshes: Map<string, THREE.Group>
-    carGroups: THREE.Group[]
-    waterMeshes: THREE.Mesh[]
-    nightLights: THREE.PointLight[]
-    clock: THREE.Clock
-    isDragging: boolean
-    lastMouse: { x: number; y: number }
-    isRightDrag: boolean
-    spherical: THREE.Spherical
-    target: THREE.Vector3
-    orbitRadius: number
   } | null>(null)
 
   const phaseRef = useRef(phase)
@@ -154,11 +133,12 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     if (!el) return
 
     // ─── RENDERER ───
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25))
+    const dpr = Math.min(window.devicePixelRatio, 1.5)
+    const renderer = new THREE.WebGLRenderer({ antialias: dpr <= 1, alpha: false, powerPreference: "high-performance" })
+    renderer.setPixelRatio(dpr)
     renderer.setSize(el.clientWidth, el.clientHeight)
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.type = THREE.BasicShadowMap // Much faster than PCFSoft
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.1
     renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -183,16 +163,15 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     const target = new THREE.Vector3(0, 0, 0)
     const offset = new THREE.Vector3().subVectors(camera.position, target)
     const spherical = new THREE.Spherical().setFromVector3(offset)
-    const orbitRadius = offset.length()
 
-    // ─── LIGHTS ───
+    // ─── LIGHTS (minimal for perf) ───
     const ambLight = new THREE.AmbientLight(0xc0c8d0, 0.55)
     scene.add(ambLight)
 
     const sunLight = new THREE.DirectionalLight(0xfff5e8, 1.0)
     sunLight.position.set(18, 30, 14)
     sunLight.castShadow = true
-    sunLight.shadow.mapSize.set(1024, 1024)
+    sunLight.shadow.mapSize.set(512, 512) // Halved from 1024
     sunLight.shadow.camera.far = 80
     sunLight.shadow.camera.left = -35
     sunLight.shadow.camera.right = 35
@@ -202,14 +181,10 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     sunLight.shadow.normalBias = 0.02
     scene.add(sunLight)
 
-    const fillLight = new THREE.DirectionalLight(0x88a8cc, 0.12)
-    fillLight.position.set(-12, 8, -10)
-    scene.add(fillLight)
-
     const hemiLight = new THREE.HemisphereLight(0xa8c0d8, 0x607040, 0.2)
     scene.add(hemiLight)
 
-    // Moonlight (cool blue, from upper-right, always present but only visible at night)
+    // Moonlight
     const moonLight = new THREE.DirectionalLight(0x6688cc, 0)
     moonLight.position.set(-10, 25, -8)
     scene.add(moonLight)
@@ -217,18 +192,18 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     // ─── BASE PLANE ───
     const basePlane = new THREE.Mesh(
       new THREE.PlaneGeometry(200, 200),
-      new THREE.MeshStandardMaterial({ color: 0x4a6830, roughness: 0.95 })
+      new THREE.MeshLambertMaterial({ color: 0x4a6830 })
     )
     basePlane.rotation.x = -Math.PI / 2
     basePlane.position.y = -0.2
     basePlane.receiveShadow = true
     scene.add(basePlane)
 
-    // ─── TERRAIN ───
+    // ─── TERRAIN (InstancedMesh) ───
     const season = getMichiganSeason()
     const tileCount = MAP * MAP
     const tileGeo = new THREE.BoxGeometry(1, 0.12, 1)
-    const tileMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92 })
+    const tileMat = new THREE.MeshLambertMaterial({ vertexColors: true })
     const tileMesh = new THREE.InstancedMesh(tileGeo, tileMat, tileCount)
     tileMesh.receiveShadow = true
     const dummy = new THREE.Object3D()
@@ -253,7 +228,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         dummy.updateMatrix()
         tileMesh.setMatrixAt(idx, dummy.matrix)
         const base = tile.hasPath
-          ? [0.28 + rng * 0.02, 0.28 + rng * 0.02, 0.27 + rng * 0.02]
+          ? [0.28 + rng * 0.02, 0.28 + rng * 0.02, 0.27 + rng * 0.02] as [number, number, number]
           : getBiomeColor(tile.biome, season)
         c.setRGB(base[0] + (rng - 0.5) * 0.04, base[1] + (rng2 - 0.5) * 0.04, base[2] + (rng - 0.5) * 0.03, THREE.SRGBColorSpace)
         tileColors[idx * 3] = c.r
@@ -266,70 +241,119 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     tileGeo.setAttribute("color", new THREE.InstancedBufferAttribute(tileColors, 3))
     scene.add(tileMesh)
 
-    // ─── ROADS (asphalt + sidewalks + crosswalk + centerline) ───
-    const roadGroup = new THREE.Group()
-    scene.add(roadGroup)
-    const roadMat = new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 0.88 })
-    const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0xb8b4aa, roughness: 0.82 })
-    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xe0ddd5, roughness: 0.7 })
-    const yellowMat = new THREE.MeshStandardMaterial({ color: 0xd4c840, roughness: 0.6 })
-    const roadGeo = new THREE.BoxGeometry(0.96, 0.05, 0.96)
-    const sideGeo = new THREE.BoxGeometry(1, 0.06, 0.08)
-    const stripeGeo = new THREE.BoxGeometry(0.06, 0.005, 0.22)
-    const lineGeo = new THREE.BoxGeometry(0.015, 0.003, 0.3)
-
+    // ─── ROADS (InstancedMesh batched) ───
+    // Count road tiles first
+    const roadTiles: { x: number; z: number; hasN: boolean; hasS: boolean; hasE: boolean; hasW: boolean }[] = []
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
-        const tile = map[y]?.[x]
-        if (!tile?.hasPath) continue
-        const wx = x - HALF + 0.5
-        const wz = y - HALF + 0.5
-        const rh = hillH(wx, wz) * 0.1
-
-        // Asphalt
-        const road = new THREE.Mesh(roadGeo, roadMat)
-        road.position.set(wx, rh + 0.01, wz)
-        road.receiveShadow = true
-        roadGroup.add(road)
-
-        // Check neighbors
-        const hasN = !!(map[y - 1]?.[x]?.hasPath)
-        const hasS = !!(map[y + 1]?.[x]?.hasPath)
-        const hasE = !!(map[y]?.[x + 1]?.hasPath)
-        const hasW = !!(map[y]?.[x - 1]?.hasPath)
-
-        // Sidewalks on non-connected edges
-        if (!hasN) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx, rh + 0.03, wz - 0.46); roadGroup.add(s) }
-        if (!hasS) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx, rh + 0.03, wz + 0.46); roadGroup.add(s) }
-        if (!hasE) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx + 0.46, rh + 0.03, wz); s.rotation.y = Math.PI / 2; roadGroup.add(s) }
-        if (!hasW) { const s = new THREE.Mesh(sideGeo, sidewalkMat); s.position.set(wx - 0.46, rh + 0.03, wz); s.rotation.y = Math.PI / 2; roadGroup.add(s) }
-
-        // Crosswalk stripes at intersections
-        const dirs = [hasN, hasS, hasE, hasW].filter(Boolean).length
-        if (dirs >= 3) {
-          for (let i = 0; i < 5; i++) {
-            if (hasN) { const st = new THREE.Mesh(stripeGeo, stripeMat); st.position.set(wx - 0.35 + i * 0.18, rh + 0.025, wz - 0.35); roadGroup.add(st) }
-            if (hasE) { const st = new THREE.Mesh(stripeGeo, stripeMat); st.position.set(wx + 0.35, rh + 0.025, wz - 0.35 + i * 0.18); st.rotation.y = Math.PI / 2; roadGroup.add(st) }
-          }
-        }
-
-        // Center yellow line on straight roads
-        const isNS = hasN && hasS && !hasE && !hasW
-        const isEW = hasE && hasW && !hasN && !hasS
-        if (isNS || isEW) {
-          const ln = new THREE.Mesh(lineGeo, yellowMat)
-          ln.position.set(wx, rh + 0.02, wz)
-          if (isEW) ln.rotation.y = Math.PI / 2
-          roadGroup.add(ln)
-        }
+        if (!map[y]?.[x]?.hasPath) continue
+        roadTiles.push({
+          x, z: y,
+          hasN: !!(map[y - 1]?.[x]?.hasPath),
+          hasS: !!(map[y + 1]?.[x]?.hasPath),
+          hasE: !!(map[y]?.[x + 1]?.hasPath),
+          hasW: !!(map[y]?.[x - 1]?.hasPath),
+        })
       }
     }
 
-    // ─── BUILDINGS ───
+    // Road asphalt - instanced
+    const roadGeo = new THREE.BoxGeometry(0.96, 0.05, 0.96)
+    const roadMat = new THREE.MeshLambertMaterial({ color: 0x3a3d42 })
+    const roadIM = new THREE.InstancedMesh(roadGeo, roadMat, roadTiles.length)
+    roadIM.receiveShadow = true
+    roadTiles.forEach((rt, i) => {
+      const wx = rt.x - HALF + 0.5
+      const wz = rt.z - HALF + 0.5
+      const rh = hillH(wx, wz) * 0.1
+      dummy.position.set(wx, rh + 0.01, wz)
+      dummy.rotation.set(0, 0, 0)
+      dummy.scale.set(1, 1, 1)
+      dummy.updateMatrix()
+      roadIM.setMatrixAt(i, dummy.matrix)
+    })
+    roadIM.instanceMatrix.needsUpdate = true
+    scene.add(roadIM)
+
+    // Sidewalks - instanced (count edges without neighbors)
+    const sidewalkData: { wx: number; wz: number; rh: number; rotY: number }[] = []
+    for (const rt of roadTiles) {
+      const wx = rt.x - HALF + 0.5
+      const wz = rt.z - HALF + 0.5
+      const rh = hillH(wx, wz) * 0.1
+      if (!rt.hasN) sidewalkData.push({ wx, wz: wz - 0.46, rh: rh + 0.03, rotY: 0 })
+      if (!rt.hasS) sidewalkData.push({ wx, wz: wz + 0.46, rh: rh + 0.03, rotY: 0 })
+      if (!rt.hasE) sidewalkData.push({ wx: wx + 0.46, wz, rh: rh + 0.03, rotY: Math.PI / 2 })
+      if (!rt.hasW) sidewalkData.push({ wx: wx - 0.46, wz, rh: rh + 0.03, rotY: Math.PI / 2 })
+    }
+    if (sidewalkData.length > 0) {
+      const sideGeo = new THREE.BoxGeometry(1, 0.06, 0.08)
+      const sidewalkMat = new THREE.MeshLambertMaterial({ color: 0xb8b4aa })
+      const sidewalkIM = new THREE.InstancedMesh(sideGeo, sidewalkMat, sidewalkData.length)
+      sidewalkData.forEach((s, i) => {
+        dummy.position.set(s.wx, s.rh, s.wz)
+        dummy.rotation.set(0, s.rotY, 0)
+        dummy.scale.set(1, 1, 1)
+        dummy.updateMatrix()
+        sidewalkIM.setMatrixAt(i, dummy.matrix)
+      })
+      sidewalkIM.instanceMatrix.needsUpdate = true
+      scene.add(sidewalkIM)
+    }
+
+    // Center yellow lines - instanced
+    const lineData: { wx: number; wz: number; rh: number; rotY: number }[] = []
+    for (const rt of roadTiles) {
+      const isNS = rt.hasN && rt.hasS && !rt.hasE && !rt.hasW
+      const isEW = rt.hasE && rt.hasW && !rt.hasN && !rt.hasS
+      if (isNS || isEW) {
+        const wx = rt.x - HALF + 0.5
+        const wz = rt.z - HALF + 0.5
+        const rh = hillH(wx, wz) * 0.1
+        lineData.push({ wx, wz, rh: rh + 0.02, rotY: isEW ? Math.PI / 2 : 0 })
+      }
+    }
+    if (lineData.length > 0) {
+      const lineGeo = new THREE.BoxGeometry(0.015, 0.003, 0.3)
+      const yellowMat = new THREE.MeshLambertMaterial({ color: 0xd4c840 })
+      const lineIM = new THREE.InstancedMesh(lineGeo, yellowMat, lineData.length)
+      lineData.forEach((l, i) => {
+        dummy.position.set(l.wx, l.rh, l.wz)
+        dummy.rotation.set(0, l.rotY, 0)
+        dummy.scale.set(1, 1, 1)
+        dummy.updateMatrix()
+        lineIM.setMatrixAt(i, dummy.matrix)
+      })
+      lineIM.instanceMatrix.needsUpdate = true
+      scene.add(lineIM)
+    }
+
+    // ─── BUILDINGS (merged geometry approach) ───
+    // Use shared geometries + a single merged group with castShadow on the group
     const bldGroup = new THREE.Group()
     scene.add(bldGroup)
-    const nightLights: THREE.PointLight[] = []
-    const windowGlassMats: THREE.MeshStandardMaterial[] = []
+    const windowGlassMats: THREE.MeshLambertMaterial[] = []
+
+    // Shared geometries cache
+    const geoCache = new Map<string, THREE.BoxGeometry>()
+    function getBoxGeo(w: number, h: number, d: number): THREE.BoxGeometry {
+      const key = `${w.toFixed(3)}_${h.toFixed(3)}_${d.toFixed(3)}`
+      let g = geoCache.get(key)
+      if (!g) { g = new THREE.BoxGeometry(w, h, d); geoCache.set(key, g) }
+      return g
+    }
+
+    // Shared materials cache
+    const matCache = new Map<number, THREE.MeshLambertMaterial>()
+    function getLambertMat(color: number): THREE.MeshLambertMaterial {
+      let m = matCache.get(color)
+      if (!m) { m = new THREE.MeshLambertMaterial({ color }); matCache.set(color, m) }
+      return m
+    }
+
+    // Night glow (shared for all windows)
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0x6080a0, transparent: true, opacity: 0.65, emissive: 0xffcc44, emissiveIntensity: 0 })
+    windowGlassMats.push(glassMat)
 
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
@@ -350,148 +374,87 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         grp.position.set(wx, baseY, wz)
 
         // Foundation
-        const found = new THREE.Mesh(
-          new THREE.BoxGeometry(fx + 0.06, 0.03, fz + 0.06),
-          new THREE.MeshStandardMaterial({ color: 0xb0aaa0, roughness: 0.9 })
-        )
+        const found = new THREE.Mesh(getBoxGeo(fx + 0.06, 0.03, fz + 0.06), getLambertMat(0xb0aaa0))
         found.position.y = 0.015
-        found.receiveShadow = true
         grp.add(found)
 
         // Main walls
-        const walls = new THREE.Mesh(
-          new THREE.BoxGeometry(fx, h, fz),
-          new THREE.MeshStandardMaterial({ color: cfg.wall, roughness: cfg.modern ? 0.5 : 0.78 })
-        )
+        const walls = new THREE.Mesh(getBoxGeo(fx, h, fz), getLambertMat(cfg.wall))
         walls.position.y = h / 2 + 0.03
         walls.castShadow = true
-        walls.receiveShadow = true
         grp.add(walls)
 
         // Roof
         if (cfg.flat) {
-          const roofM = new THREE.Mesh(
-            new THREE.BoxGeometry(fx + 0.04, 0.04, fz + 0.04),
-            new THREE.MeshStandardMaterial({ color: cfg.roof, roughness: 0.82 })
-          )
+          const roofM = new THREE.Mesh(getBoxGeo(fx + 0.04, 0.04, fz + 0.04), getLambertMat(cfg.roof))
           roofM.position.y = h + 0.05
-          roofM.castShadow = true
           grp.add(roofM)
-
-          // Solar panels on modern flat roofs
-          if (cfg.modern && rng > 0.4) {
-            for (let i = 0; i < 2; i++) {
-              const sp = new THREE.Mesh(
-                new THREE.BoxGeometry(fx * 0.32, 0.008, fz * 0.28),
-                new THREE.MeshStandardMaterial({ color: 0x1a2444, roughness: 0.2, metalness: 0.6 })
-              )
-              sp.position.set((i - 0.5) * fx * 0.45, h + 0.08, 0)
-              sp.rotation.x = -0.2
-              grp.add(sp)
-            }
-          }
         } else if (h > 0.2) {
-          // Gable roof
-          const halfRoof = new THREE.BoxGeometry(fx + 0.04, 0.025, fz * 0.52)
-          const roofMatL = new THREE.MeshStandardMaterial({ color: cfg.roof, roughness: 0.7 })
-          const r1 = new THREE.Mesh(halfRoof, roofMatL)
+          const roofMat = getLambertMat(cfg.roof)
+          const halfRoof = getBoxGeo(fx + 0.04, 0.025, fz * 0.52)
+          const r1 = new THREE.Mesh(halfRoof, roofMat)
           r1.position.set(0, h + 0.15, -fz * 0.22)
           r1.rotation.x = 0.45
-          r1.castShadow = true
           grp.add(r1)
-          const r2 = new THREE.Mesh(halfRoof, roofMatL)
+          const r2 = new THREE.Mesh(halfRoof, roofMat)
           r2.position.set(0, h + 0.15, fz * 0.22)
           r2.rotation.x = -0.45
-          r2.castShadow = true
           grp.add(r2)
-          // Ridge
-          const ridge = new THREE.Mesh(
-            new THREE.BoxGeometry(fx + 0.05, 0.018, 0.018),
-            new THREE.MeshStandardMaterial({ color: 0xb0a898, roughness: 0.8 })
-          )
-          ridge.position.y = h + 0.23
-          grp.add(ridge)
         }
 
-        // Windows
+        // Windows (simplified - fewer, use shared material)
         if (cfg.win && h > 0.6) {
-          const nw = Math.max(1, Math.floor(fx / 0.2))
+          const nw = Math.max(1, Math.floor(fx / 0.25)) // fewer windows
           const spacing = fx / (nw + 1)
-          const winGeo = new THREE.BoxGeometry(0.08, 0.1, 0.008)
-          const winFrameGeo = new THREE.BoxGeometry(0.095, 0.115, 0.004)
-          const frameMat = new THREE.MeshStandardMaterial({ color: cfg.modern ? 0xe0dcd6 : 0xc8c2b8, roughness: 0.75 })
-          const glassMat = new THREE.MeshStandardMaterial({ color: 0x6080a0, roughness: 0.08, metalness: 0.12, transparent: true, opacity: 0.65, emissive: 0xffcc44, emissiveIntensity: 0 })
-          windowGlassMats.push(glassMat)
+          const winGeo = getBoxGeo(0.08, 0.1, 0.008)
           for (let wi = 0; wi < nw; wi++) {
             const wxp = -fx / 2 + spacing * (wi + 1)
             const wyp = h * 0.55 + 0.03
-            // Front
-            const frame = new THREE.Mesh(winFrameGeo, frameMat)
-            frame.position.set(wxp, wyp, fz / 2 + 0.005)
-            grp.add(frame)
             const glass = new THREE.Mesh(winGeo, glassMat)
             glass.position.set(wxp, wyp, fz / 2 + 0.001)
             grp.add(glass)
-            // Back
-            const bk = new THREE.Mesh(winGeo, glassMat)
-            bk.position.set(wxp, wyp, -fz / 2 - 0.001)
-            grp.add(bk)
           }
         }
 
         // Door
         if (cfg.door && h > 0.4) {
           const doorM = new THREE.Mesh(
-            new THREE.BoxGeometry(0.1, 0.2, 0.01),
-            new THREE.MeshStandardMaterial({ color: cfg.modern ? 0x605850 : 0x3a2010, roughness: 0.8 })
+            getBoxGeo(0.1, 0.2, 0.01),
+            getLambertMat(cfg.modern ? 0x605850 : 0x3a2010)
           )
           doorM.position.set(rng > 0.5 ? 0.06 : -0.06, 0.13, fz / 2 + 0.001)
           grp.add(doorM)
-        }
-
-        // Night interior glow -- warm window light
-        if (cfg.win && h > 0.6) {
-          const pl = new THREE.PointLight(0xffcc55, 0, 4, 1.5)
-          pl.position.set(0, h * 0.5, fz / 2 + 0.1)
-          grp.add(pl)
-          nightLights.push(pl)
-          // Also add a back-facing glow
-          const pl2 = new THREE.PointLight(0xffcc55, 0, 3, 1.5)
-          pl2.position.set(0, h * 0.5, -fz / 2 - 0.1)
-          grp.add(pl2)
-          nightLights.push(pl2)
         }
 
         bldGroup.add(grp)
       }
     }
 
-    // ─── TREES (eucalyptus/oak) ───
+    // ─── TREES (InstancedMesh - same as before but with Lambert) ───
     const treeData: { x: number; z: number; rng: number; rng2: number }[] = []
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
         const tile = map[y]?.[x]
         if (tile?.biome === "forest" && !tile.building && !tile.hasPath) {
           const r = hash(x * 7, y * 13)
-          if (r > 0.25) treeData.push({ x, z: y, rng: r, rng2: hash(x * 31, y * 47) })
+          if (r > 0.35) treeData.push({ x, z: y, rng: r, rng2: hash(x * 31, y * 47) }) // slightly fewer trees
         }
         if (tile?.hasPath) {
           const r = hash(x * 53, y * 67)
-          if (r > 0.88) treeData.push({ x, z: y, rng: r, rng2: hash(x * 71, y * 83) })
+          if (r > 0.9) treeData.push({ x, z: y, rng: r, rng2: hash(x * 71, y * 83) })
         }
       }
     }
     if (treeData.length > 0) {
-      const trunkGeo = new THREE.CylinderGeometry(0.018, 0.03, 0.5, 5)
-      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5a4028, roughness: 0.92 })
+      const trunkGeo = new THREE.CylinderGeometry(0.018, 0.03, 0.5, 4) // 4 sides instead of 5
+      const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a4028 })
       const trunkIM = new THREE.InstancedMesh(trunkGeo, trunkMat, treeData.length)
       trunkIM.castShadow = true
 
-      const canopyGeo = new THREE.DodecahedronGeometry(0.5, 1)
-      const canopyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 })
+      const canopyGeo = new THREE.DodecahedronGeometry(0.5, 0) // LOD 0 instead of 1
+      const canopyMat = new THREE.MeshLambertMaterial({ vertexColors: true })
       const canopyIM = new THREE.InstancedMesh(canopyGeo, canopyMat, treeData.length)
       canopyIM.castShadow = true
-      canopyIM.receiveShadow = true
 
       const canopyColors = new Float32Array(treeData.length * 3)
       treeData.forEach((t, i) => {
@@ -514,8 +477,8 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         canopyIM.setMatrixAt(i, dummy.matrix)
 
         const seasonColors = TREE_COLORS[season]
-  const treeC = seasonColors[Math.floor(t.rng * seasonColors.length) % seasonColors.length]
-  c.setHex(treeC)
+        const treeC = seasonColors[Math.floor(t.rng * seasonColors.length) % seasonColors.length]
+        c.setHex(treeC)
         canopyColors[i * 3] = c.r
         canopyColors[i * 3 + 1] = c.g
         canopyColors[i * 3 + 2] = c.b
@@ -527,117 +490,118 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       scene.add(canopyIM)
     }
 
-    // ─── WATER ───
-    const waterMeshes: THREE.Mesh[] = []
-    const waterMat = new THREE.MeshStandardMaterial({ color: 0x2a5878, roughness: 0.05, metalness: 0.4, transparent: true, opacity: 0.82 })
-    const waterGeo = new THREE.BoxGeometry(1.01, 0.08, 1.01)
+    // ─── WATER (InstancedMesh instead of individual meshes) ───
+    const waterTiles: { x: number; z: number }[] = []
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
-        if (map[y]?.[x]?.biome === "water") {
-          const wm = new THREE.Mesh(waterGeo, waterMat)
-          wm.position.set(x - HALF + 0.5, -0.06, y - HALF + 0.5)
-          wm.receiveShadow = true
-          wm.userData = { ox: x, oz: y }
-          scene.add(wm)
-          waterMeshes.push(wm)
-        }
+        if (map[y]?.[x]?.biome === "water") waterTiles.push({ x, z: y })
       }
     }
+    let waterIM: THREE.InstancedMesh | null = null
+    if (waterTiles.length > 0) {
+      const waterGeo = new THREE.BoxGeometry(1.01, 0.08, 1.01)
+      const waterMat = new THREE.MeshLambertMaterial({ color: 0x2a5878, transparent: true, opacity: 0.82 })
+      waterIM = new THREE.InstancedMesh(waterGeo, waterMat, waterTiles.length)
+      waterTiles.forEach((wt, i) => {
+        dummy.position.set(wt.x - HALF + 0.5, -0.06, wt.z - HALF + 0.5)
+        dummy.rotation.set(0, 0, 0)
+        dummy.scale.set(1, 1, 1)
+        dummy.updateMatrix()
+        waterIM!.setMatrixAt(i, dummy.matrix)
+      })
+      waterIM.instanceMatrix.needsUpdate = true
+      scene.add(waterIM)
+    }
 
-    // ─── STREETLIGHTS ───
-    const slGroup = new THREE.Group()
-    scene.add(slGroup)
-    const slLights: THREE.PointLight[] = []
+    // ─── STREETLIGHTS (InstancedMesh, no PointLights) ───
+    const slData: { wx: number; wz: number; baseY: number }[] = []
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
         if (map[y]?.[x]?.hasPath && hash(x * 41, y * 59) > 0.82) {
           const wx = x - HALF + 0.5 + 0.38
           const wz = y - HALF + 0.5
-          const baseY = hillH(wx, wz) * 0.1
-          const sg = new THREE.Group()
-          sg.position.set(wx, baseY, wz)
-
-          const pole = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.012, 0.015, 0.8, 5),
-            new THREE.MeshStandardMaterial({ color: 0x505558, metalness: 0.3, roughness: 0.5 })
-          )
-          sg.add(pole)
-
-          const arm = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.008, 0.008, 0.12, 4),
-            new THREE.MeshStandardMaterial({ color: 0x505558, metalness: 0.3, roughness: 0.5 })
-          )
-          arm.position.set(-0.06, 0.38, 0)
-          arm.rotation.z = -0.4
-          sg.add(arm)
-
-          const lamp = new THREE.Mesh(
-            new THREE.BoxGeometry(0.06, 0.02, 0.035),
-            new THREE.MeshStandardMaterial({ color: 0xe0ddd5, roughness: 0.3 })
-          )
-          lamp.position.set(-0.1, 0.42, 0)
-          sg.add(lamp)
-
-          const pl = new THREE.PointLight(0xffd888, 0, 5, 1.5)
-          pl.position.set(-0.1, 0.4, 0)
-          sg.add(pl)
-          slLights.push(pl)
-          nightLights.push(pl)
-
-          slGroup.add(sg)
+          slData.push({ wx, wz, baseY: hillH(wx, wz) * 0.1 })
         }
       }
     }
+    if (slData.length > 0) {
+      const poleGeo = new THREE.CylinderGeometry(0.012, 0.015, 0.8, 4)
+      const poleMat = new THREE.MeshLambertMaterial({ color: 0x505558 })
+      const poleIM = new THREE.InstancedMesh(poleGeo, poleMat, slData.length)
+      const lampGeo = new THREE.BoxGeometry(0.06, 0.02, 0.035)
+      const lampMat = new THREE.MeshLambertMaterial({ color: 0xe0ddd5, emissive: 0xffd888, emissiveIntensity: 0 })
+      windowGlassMats.push(lampMat)
+      const lampIM = new THREE.InstancedMesh(lampGeo, lampMat, slData.length)
+      slData.forEach((sl, i) => {
+        dummy.position.set(sl.wx, sl.baseY, sl.wz)
+        dummy.rotation.set(0, 0, 0)
+        dummy.scale.set(1, 1, 1)
+        dummy.updateMatrix()
+        poleIM.setMatrixAt(i, dummy.matrix)
+        dummy.position.set(sl.wx - 0.1, sl.baseY + 0.42, sl.wz)
+        dummy.updateMatrix()
+        lampIM.setMatrixAt(i, dummy.matrix)
+      })
+      poleIM.instanceMatrix.needsUpdate = true
+      lampIM.instanceMatrix.needsUpdate = true
+      scene.add(poleIM)
+      scene.add(lampIM)
+    }
 
-    // ─── PARKED CARS ───
+    // ─── PARKED CARS (InstancedMesh) ───
     const carColors = [0x8a3020, 0x1a4a78, 0x2a6838, 0xe0d0b8, 0x484848, 0xb8a888, 0x6a2838]
-    let parkedCount = 0
+    const parkedData: { wx: number; wz: number; baseY: number; rotY: number; colorIdx: number }[] = []
     for (let y = 0; y < MAP; y++) {
       for (let x = 0; x < MAP; x++) {
         const tile = map[y]?.[x]
         if (tile?.building && ["shop", "hospital", "college", "market", "inn"].includes(tile.building)) {
           const r = hash(x * 23, y * 41)
-          if (r > 0.4 && parkedCount < 24) {
+          if (r > 0.4 && parkedData.length < 24) {
             const wx = x - HALF + 0.5 + (r - 0.5) * 0.3
             const wz = y - HALF + 0.5 + 0.55
-            const baseY = hillH(wx, wz) * 0.1
-            const cg = new THREE.Group()
-            cg.position.set(wx, baseY + 0.06, wz)
-            cg.rotation.y = r > 0.7 ? 0 : Math.PI / 2
-            const body = new THREE.Mesh(
-              new THREE.BoxGeometry(0.3, 0.09, 0.15),
-              new THREE.MeshStandardMaterial({ color: carColors[Math.floor(r * carColors.length)], roughness: 0.35, metalness: 0.4 })
-            )
-            body.castShadow = true
-            cg.add(body)
-            const cabin = new THREE.Mesh(
-              new THREE.BoxGeometry(0.16, 0.06, 0.12),
-              new THREE.MeshStandardMaterial({ color: 0x6a8ca8, roughness: 0.1, metalness: 0.15, transparent: true, opacity: 0.7 })
-            )
-            cabin.position.y = 0.065
-            cabin.castShadow = true
-            cg.add(cabin)
-            scene.add(cg)
-            parkedCount++
+            parkedData.push({ wx, wz, baseY: hillH(wx, wz) * 0.1 + 0.06, rotY: r > 0.7 ? 0 : Math.PI / 2, colorIdx: Math.floor(r * carColors.length) })
           }
         }
       }
     }
+    if (parkedData.length > 0) {
+      const carBodyGeo = new THREE.BoxGeometry(0.3, 0.09, 0.15)
+      const carBodyMat = new THREE.MeshLambertMaterial({ vertexColors: true })
+      const carBodyIM = new THREE.InstancedMesh(carBodyGeo, carBodyMat, parkedData.length)
+      carBodyIM.castShadow = true
+      const carBodyColors = new Float32Array(parkedData.length * 3)
+      const cabinGeo = new THREE.BoxGeometry(0.16, 0.06, 0.12)
+      const cabinMat = new THREE.MeshLambertMaterial({ color: 0x6a8ca8, transparent: true, opacity: 0.7 })
+      const cabinIM = new THREE.InstancedMesh(cabinGeo, cabinMat, parkedData.length)
+      parkedData.forEach((cd, i) => {
+        dummy.position.set(cd.wx, cd.baseY, cd.wz)
+        dummy.rotation.set(0, cd.rotY, 0)
+        dummy.scale.set(1, 1, 1)
+        dummy.updateMatrix()
+        carBodyIM.setMatrixAt(i, dummy.matrix)
+        dummy.position.y += 0.065
+        dummy.updateMatrix()
+        cabinIM.setMatrixAt(i, dummy.matrix)
+        c.setHex(carColors[cd.colorIdx])
+        carBodyColors[i * 3] = c.r
+        carBodyColors[i * 3 + 1] = c.g
+        carBodyColors[i * 3 + 2] = c.b
+      })
+      carBodyIM.instanceMatrix.needsUpdate = true
+      cabinIM.instanceMatrix.needsUpdate = true
+      carBodyGeo.setAttribute("color", new THREE.InstancedBufferAttribute(carBodyColors, 3))
+      scene.add(carBodyIM)
+      scene.add(cabinIM)
+    }
 
-    // ─── MOVING CARS (road-constrained paths) ───
-    const movingCarGroup: THREE.Group[] = []
-
-    // Build adjacency list for road tiles
+    // ─── MOVING CARS (road-constrained, limited to 6) ───
     const roadSet = new Set<string>()
     const roadList: { x: number; z: number }[] = []
     for (let y = 0; y < MAP; y++)
       for (let x = 0; x < MAP; x++)
-        if (map[y]?.[x]?.hasPath) {
-          roadSet.add(`${x},${y}`)
-          roadList.push({ x, z: y })
-        }
+        if (map[y]?.[x]?.hasPath) { roadSet.add(`${x},${y}`); roadList.push({ x, z: y }) }
 
-    function getRoadNeighbors(rx: number, rz: number): { x: number; z: number }[] {
+    function getRoadNeighbors(rx: number, rz: number) {
       const nb: { x: number; z: number }[] = []
       if (roadSet.has(`${rx},${rz - 1}`)) nb.push({ x: rx, z: rz - 1 })
       if (roadSet.has(`${rx},${rz + 1}`)) nb.push({ x: rx, z: rz + 1 })
@@ -646,69 +610,45 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       return nb
     }
 
-    // Build looping paths for each car by random-walking on the road graph
-    function buildCarPath(startIdx: number, length: number): { x: number; z: number }[] {
+    function buildCarPath(startIdx: number, length: number) {
       const start = roadList[startIdx % roadList.length]
       if (!start) return []
       const path = [start]
-      let cur = start
-      let prev = { x: -1, z: -1 }
+      let cur = start, prev = { x: -1, z: -1 }
       for (let step = 0; step < length; step++) {
         const nb = getRoadNeighbors(cur.x, cur.z).filter(n => !(n.x === prev.x && n.z === prev.z))
         if (nb.length === 0) break
-        const rng = hash(startIdx * 71 + step * 13, step * 37 + startIdx * 53)
-        const next = nb[Math.floor(rng * nb.length)]
-        prev = cur
-        cur = next
-        path.push(cur)
+        const r = hash(startIdx * 71 + step * 13, step * 37 + startIdx * 53)
+        prev = cur; cur = nb[Math.floor(r * nb.length)]; path.push(cur)
       }
       return path
     }
 
-    const numCars = Math.min(10, Math.floor(roadList.length / 8))
-    const mvCarColors = [0x8a2e20, 0x1e4e7a, 0x1e6e38, 0xd8c0a0, 0x383838, 0xc02020, 0x1a7878, 0xf0e0c0, 0x2a2a2a, 0x884422]
+    const numCars = Math.min(6, Math.floor(roadList.length / 12))
+    const movingCarGroups: THREE.Group[] = []
+    const mvCarColors = [0x8a2e20, 0x1e4e7a, 0x1e6e38, 0xd8c0a0, 0x383838, 0xc02020]
     for (let i = 0; i < numCars; i++) {
       const pathLen = 30 + Math.floor(hash(i * 19, i * 41) * 40)
       const startIdx = Math.floor(hash(i * 29, i * 43) * roadList.length)
       const path = buildCarPath(startIdx, pathLen)
       if (path.length < 4) continue
-
       const cg = new THREE.Group()
-      // Car body
-      const bd = new THREE.Mesh(
-        new THREE.BoxGeometry(0.32, 0.1, 0.16),
-        new THREE.MeshStandardMaterial({ color: mvCarColors[i % mvCarColors.length], roughness: 0.3, metalness: 0.45 })
-      )
+      const bd = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.1, 0.16), getLambertMat(mvCarColors[i % mvCarColors.length]))
       bd.castShadow = true
       cg.add(bd)
-      // Cabin glass
-      const cb = new THREE.Mesh(
-        new THREE.BoxGeometry(0.16, 0.065, 0.13),
-        new THREE.MeshStandardMaterial({ color: 0x6890b0, roughness: 0.08, metalness: 0.12, transparent: true, opacity: 0.7 })
-      )
+      const cb = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.065, 0.13), new THREE.MeshLambertMaterial({ color: 0x6890b0, transparent: true, opacity: 0.7 }))
       cb.position.y = 0.075
       cg.add(cb)
-      // Headlights (emissive, visible at night)
-      const hlGeo = new THREE.BoxGeometry(0.02, 0.025, 0.04)
-      const hlMat = new THREE.MeshStandardMaterial({ color: 0xffffdd, emissive: 0xffffaa, emissiveIntensity: 0.3 })
-      windowGlassMats.push(hlMat) // Reuse the glow toggle for headlights too
-      const hl1 = new THREE.Mesh(hlGeo, hlMat); hl1.position.set(0.17, -0.01, 0.05); cg.add(hl1)
-      const hl2 = new THREE.Mesh(hlGeo, hlMat); hl2.position.set(0.17, -0.01, -0.05); cg.add(hl2)
-      // Tail lights
-      const tlMat = new THREE.MeshStandardMaterial({ color: 0xff2200, emissive: 0xff2200, emissiveIntensity: 0.2 })
-      const tl1 = new THREE.Mesh(hlGeo, tlMat); tl1.position.set(-0.17, -0.01, 0.05); cg.add(tl1)
-      const tl2 = new THREE.Mesh(hlGeo, tlMat); tl2.position.set(-0.17, -0.01, -0.05); cg.add(tl2)
-
       cg.userData = { path, speed: 0.3 + hash(i * 17, i * 31) * 0.4, idx: i }
       scene.add(cg)
-      movingCarGroup.push(cg)
+      movingCarGroups.push(cg)
     }
 
     // ─── AGENT MESHES ───
     const agentMeshes = new Map<string, THREE.Group>()
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0xe0c0a0, roughness: 0.6 })
-    const capsuleGeo = new THREE.CapsuleGeometry(0.04, 0.08, 4, 8)
-    const headGeo = new THREE.SphereGeometry(0.05, 8, 8)
+    const bodyMat = new THREE.MeshLambertMaterial({ color: 0xe0c0a0 })
+    const capsuleGeo = new THREE.CapsuleGeometry(0.04, 0.08, 2, 6)
+    const headGeo = new THREE.SphereGeometry(0.05, 6, 6)
 
     function getOrCreateAgent(agent: Agent): THREE.Group {
       let ag = agentMeshes.get(agent.id)
@@ -719,44 +659,35 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       ag.add(body)
       const head = new THREE.Mesh(headGeo, bodyMat)
       head.position.y = 0.1
-      head.castShadow = true
       ag.add(head)
-  ag.userData = { agentId: agent.id }
-  scene.add(ag)
-  agentMeshes.set(agent.id, ag)
-  return ag
+      ag.userData = { agentId: agent.id }
+      scene.add(ag)
+      agentMeshes.set(agent.id, ag)
+      return ag
     }
 
-    // ─── ORBIT CONTROLS (manual) ───
+    // ─── ORBIT CONTROLS ───
     let isDragging = false
     let isRightDrag = false
     let lastMouse = { x: 0, y: 0 }
-    const sph = spherical
 
     const onPointerDown = (e: PointerEvent) => {
-      isDragging = true
-      isRightDrag = e.button === 2
-      lastMouse = { x: e.clientX, y: e.clientY }
+      isDragging = true; isRightDrag = e.button === 2; lastMouse = { x: e.clientX, y: e.clientY }
     }
     const onPointerMove = (e: PointerEvent) => {
       if (!isDragging) return
       const dx = e.clientX - lastMouse.x
       const dy = e.clientY - lastMouse.y
       lastMouse = { x: e.clientX, y: e.clientY }
-
       if (isRightDrag) {
-        // Rotate
-        sph.theta -= dx * 0.005
-        sph.phi -= dy * 0.005
-        sph.phi = Math.max(0.3, Math.min(Math.PI / 2.5, sph.phi))
+        spherical.theta -= dx * 0.005
+        spherical.phi -= dy * 0.005
+        spherical.phi = Math.max(0.3, Math.min(Math.PI / 2.5, spherical.phi))
       } else {
-        // Pan
         const panSpeed = 0.04 / (camera.zoom * 0.05)
         const right = new THREE.Vector3()
-        const up = new THREE.Vector3(0, 1, 0)
-        camera.getWorldDirection(new THREE.Vector3())
         right.crossVectors(camera.up, new THREE.Vector3().subVectors(camera.position, target).normalize()).normalize()
-        const forward = new THREE.Vector3().crossVectors(right, up).normalize()
+        const forward = new THREE.Vector3().crossVectors(right, new THREE.Vector3(0, 1, 0)).normalize()
         target.addScaledVector(right, -dx * panSpeed)
         target.addScaledVector(forward, dy * panSpeed)
       }
@@ -765,15 +696,14 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     const onPointerUp = () => { isDragging = false }
     const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const factor = e.deltaY > 0 ? 0.92 : 1.08
-      camera.zoom = Math.max(3, Math.min(80, camera.zoom * factor))
+      camera.zoom = Math.max(3, Math.min(80, camera.zoom * (e.deltaY > 0 ? 0.92 : 1.08)))
       camera.updateProjectionMatrix()
     }
     const onContextMenu = (e: Event) => e.preventDefault()
 
     function updateCamera() {
-      const offset = new THREE.Vector3().setFromSpherical(sph)
-      camera.position.copy(target).add(offset)
+      const off = new THREE.Vector3().setFromSpherical(spherical)
+      camera.position.copy(target).add(off)
       camera.lookAt(target)
       camera.updateProjectionMatrix()
     }
@@ -786,87 +716,67 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
     domEl.addEventListener("wheel", onWheel, { passive: false })
     domEl.addEventListener("contextmenu", onContextMenu)
 
-  // Agent click detection via raycasting
-  const raycaster = new THREE.Raycaster()
-  const clickMouse = new THREE.Vector2()
-  let clickStart = { x: 0, y: 0 }
-  domEl.addEventListener("pointerdown", (e) => { clickStart = { x: e.clientX, y: e.clientY } })
-  const onClickForAgent = (e: MouseEvent) => {
-    // Only trigger on short clicks (not drags)
-    const dx = e.clientX - clickStart.x
-    const dy = e.clientY - clickStart.y
-    if (Math.sqrt(dx * dx + dy * dy) > 5) return
-    if (!onAgentClickRef.current) return
-
-    const rect = domEl.getBoundingClientRect()
-    clickMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
-    clickMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
-    raycaster.setFromCamera(clickMouse, camera)
-
-    // Check intersections with agent meshes
-    const agentMeshArray = Array.from(agentMeshes.values())
-    const allChildren: THREE.Object3D[] = []
-    for (const grp of agentMeshArray) {
-      grp.traverse((child) => allChildren.push(child))
-    }
-    const intersects = raycaster.intersectObjects(allChildren, false)
-    if (intersects.length > 0) {
-      // Walk up to find the agent group
-      let obj: THREE.Object3D | null = intersects[0].object
-      while (obj) {
-        if (obj.userData?.agentId) {
-          onAgentClickRef.current(obj.userData.agentId)
-          return
-        }
-        obj = obj.parent
-      }
-    }
-  }
-  domEl.addEventListener("click", onClickForAgent)
-
-  // Lightweight hover detection: use distance-based check instead of full raycasting
-  // Only check every 100ms and use screen-space distance to agent positions
-  let hoverTimeout: ReturnType<typeof setTimeout> | null = null
-  const onHoverCheck = (e: MouseEvent) => {
-    if (hoverTimeout) return
-    hoverTimeout = setTimeout(() => {
-      hoverTimeout = null
-      // Simple screen-space distance check (much cheaper than raycasting)
+    // Agent click detection
+    const raycaster = new THREE.Raycaster()
+    const clickMouse = new THREE.Vector2()
+    let clickStart = { x: 0, y: 0 }
+    domEl.addEventListener("pointerdown", (e) => { clickStart = { x: e.clientX, y: e.clientY } })
+    const onClickForAgent = (e: MouseEvent) => {
+      const dx = e.clientX - clickStart.x, dy = e.clientY - clickStart.y
+      if (Math.sqrt(dx * dx + dy * dy) > 5) return
+      if (!onAgentClickRef.current) return
       const rect = domEl.getBoundingClientRect()
-      const mx = e.clientX - rect.left
-      const my = e.clientY - rect.top
-      let found = false
-      for (const [, grp] of agentMeshes) {
-        if (!grp.visible) continue
-        const pos = grp.position.clone().project(camera)
-        const sx = (pos.x * 0.5 + 0.5) * rect.width
-        const sy = (-pos.y * 0.5 + 0.5) * rect.height
-        const dist = Math.sqrt((mx - sx) ** 2 + (my - sy) ** 2)
-        if (dist < 20) { found = true; break }
+      clickMouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+      clickMouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(clickMouse, camera)
+      const allChildren: THREE.Object3D[] = []
+      for (const grp of agentMeshes.values()) grp.traverse((child) => allChildren.push(child))
+      const intersects = raycaster.intersectObjects(allChildren, false)
+      if (intersects.length > 0) {
+        let obj: THREE.Object3D | null = intersects[0].object
+        while (obj) {
+          if (obj.userData?.agentId) { onAgentClickRef.current(obj.userData.agentId); return }
+          obj = obj.parent
+        }
       }
-      domEl.style.cursor = found ? "pointer" : ""
-    }, 100)
-  }
-  domEl.addEventListener("mousemove", onHoverCheck)
+    }
+    domEl.addEventListener("click", onClickForAgent)
+
+    // Throttled hover
+    let hoverTimeout: ReturnType<typeof setTimeout> | null = null
+    const onHoverCheck = (e: MouseEvent) => {
+      if (hoverTimeout) return
+      hoverTimeout = setTimeout(() => {
+        hoverTimeout = null
+        const rect = domEl.getBoundingClientRect()
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top
+        let found = false
+        for (const [, grp] of agentMeshes) {
+          if (!grp.visible) continue
+          const pos = grp.position.clone().project(camera)
+          const sx = (pos.x * 0.5 + 0.5) * rect.width
+          const sy = (-pos.y * 0.5 + 0.5) * rect.height
+          if (Math.sqrt((mx - sx) ** 2 + (my - sy) ** 2) < 20) { found = true; break }
+        }
+        domEl.style.cursor = found ? "pointer" : ""
+      }, 150) // Increased from 100ms
+    }
+    domEl.addEventListener("mousemove", onHoverCheck)
 
     // ─── RESIZE ───
     const onResize = () => {
       if (!el) return
-      const w = el.clientWidth
-      const h2 = el.clientHeight
-      const a = w / h2
-      camera.left = -frustum * a
-      camera.right = frustum * a
-      camera.top = frustum
-      camera.bottom = -frustum
+      const w = el.clientWidth, h2 = el.clientHeight, a = w / h2
+      camera.left = -frustum * a; camera.right = frustum * a
+      camera.top = frustum; camera.bottom = -frustum
       camera.updateProjectionMatrix()
       renderer.setSize(w, h2)
     }
     const ro = new ResizeObserver(onResize)
     ro.observe(el)
 
-    // ─── WEATHER PARTICLES (snow/leaves/rain) ───
-    const particleCount = season === "winter" ? 600 : season === "autumn" ? 300 : 0
+    // ─── WEATHER PARTICLES (reduced count) ───
+    const particleCount = season === "winter" ? 300 : season === "autumn" ? 150 : 0
     let particleSystem: THREE.Points | null = null
     let particlePositions: Float32Array | null = null
     let particleSpeeds: Float32Array | null = null
@@ -885,20 +795,25 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       const pMat = new THREE.PointsMaterial({
         color: season === "winter" ? 0xffffff : 0xc86830,
         size: season === "winter" ? 0.06 : 0.08,
-        transparent: true,
-        opacity: season === "winter" ? 0.8 : 0.6,
-        depthWrite: false,
+        transparent: true, opacity: season === "winter" ? 0.8 : 0.6, depthWrite: false,
       })
       particleSystem = new THREE.Points(pGeo, pMat)
       scene.add(particleSystem)
     }
 
-    // ─── ANIMATION LOOP ───
+    // ─── ANIMATION LOOP (throttled to ~30fps) ───
     const clock = new THREE.Clock()
     let animId = 0
     let lastPhase = ""
+    let frameCount = 0
+
     function animate() {
       animId = requestAnimationFrame(animate)
+      frameCount++
+
+      // Skip every other frame for ~30fps
+      if (frameCount % 2 !== 0) return
+
       const t = clock.getElapsedTime()
       const ph = phaseRef.current
       const light = phaseLight(ph)
@@ -913,60 +828,49 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       hemiLight.intensity = ph === "night" ? 0.12 : 0.2
       hemiLight.color.set(ph === "night" ? 0x283858 : 0xa8c0d8)
       hemiLight.groundColor.set(ph === "night" ? 0x141c28 : 0x607040)
-
-      // Moonlight -- bright blue fill at night, off during day
       moonLight.intensity = ph === "night" ? 0.4 : ph === "evening" ? 0.2 : 0
+
       if (phaseChanged) {
         fog.color.set(light.fog)
         fog.near = light.fogN
         fog.far = light.fogF
         scene.background = new THREE.Color(light.sky)
         renderer.toneMappingExposure = ph === "night" ? 1.6 : ph === "evening" ? 1.3 : 1.1
-      }
-
-      // Night lights + window glow -- only update when phase changes
-      if (phaseChanged) {
-        for (const nl of nightLights) {
-          nl.intensity = isNight ? 4.0 : 0
-        }
+        // Window glow
         for (const gm of windowGlassMats) {
           gm.emissiveIntensity = isNight ? 0.8 : ph === "evening" ? 0.4 : 0
           gm.opacity = isNight ? 0.9 : 0.65
         }
       }
 
-      // Animate water (every 3rd frame to save CPU)
-      if (animId % 3 === 0) {
-        for (const wm of waterMeshes) {
-          const ox = wm.userData.ox as number
-          const oz = wm.userData.oz as number
-          wm.position.y = -0.06 + Math.sin(t * 0.4 + ox * 0.25 + oz * 0.2) * 0.01
-        }
+      // Animate water (every 6th rendered frame)
+      if (waterIM && frameCount % 6 === 0) {
+        waterTiles.forEach((wt, i) => {
+          dummy.position.set(wt.x - HALF + 0.5, -0.06 + Math.sin(t * 0.4 + wt.x * 0.25 + wt.z * 0.2) * 0.01, wt.z - HALF + 0.5)
+          dummy.rotation.set(0, 0, 0)
+          dummy.scale.set(1, 1, 1)
+          dummy.updateMatrix()
+          waterIM!.setMatrixAt(i, dummy.matrix)
+        })
+        waterIM.instanceMatrix.needsUpdate = true
       }
 
-      // Animate moving cars along road paths
-      for (const cg of movingCarGroup) {
+      // Animate moving cars
+      for (const cg of movingCarGroups) {
         const d = cg.userData as { path: { x: number; z: number }[]; speed: number; idx: number }
         const pathLen = d.path.length
         if (pathLen < 2) continue
-        // Progress along path (ping-pong)
         const totalDist = pathLen - 1
         const ct = (t * d.speed + d.idx * 3.7) % (totalDist * 2)
         const progress = ct <= totalDist ? ct : totalDist * 2 - ct
         const segIdx = Math.min(Math.floor(progress), pathLen - 2)
         const frac = progress - segIdx
-        const a = d.path[segIdx]
-        const b = d.path[segIdx + 1]
+        const a = d.path[segIdx], b = d.path[segIdx + 1]
         const wx = (a.x + (b.x - a.x) * frac) - HALF + 0.5
         const wz = (a.z + (b.z - a.z) * frac) - HALF + 0.5
-        const rh = hillH(wx, wz) * 0.1
-        cg.position.set(wx, rh + 0.08, wz)
-        // Face direction of travel
-        const dx = b.x - a.x
-        const dz = b.z - a.z
-        if (dx !== 0 || dz !== 0) {
-          cg.rotation.y = Math.atan2(dx, dz)
-        }
+        cg.position.set(wx, hillH(wx, wz) * 0.1 + 0.08, wz)
+        const ddx = b.x - a.x, ddz = b.z - a.z
+        if (ddx !== 0 || ddz !== 0) cg.rotation.y = Math.atan2(ddx, ddz)
       }
 
       // Update agents
@@ -975,11 +879,7 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       for (const agent of currentAgents) {
         activeIds.add(agent.id)
         const ag = getOrCreateAgent(agent)
-        const isSleeping = agent.status === "sleeping"
-        if (isSleeping && isNight) {
-          ag.visible = false
-          continue
-        }
+        if (agent.status === "sleeping" && isNight) { ag.visible = false; continue }
         ag.visible = true
         const wx = agent.position.x - HALF + 0.5
         const wz = agent.position.y - HALF + 0.5
@@ -987,46 +887,34 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
         const idxN = parseInt(agent.id.replace(/\D/g, ""), 10) || 0
         ag.position.set(wx, baseY + 0.12 + Math.abs(Math.sin(t * 3 + idxN * 1.1)) * 0.015, wz)
       }
-      // Remove stale agents
       for (const [id, mesh] of agentMeshes) {
-        if (!activeIds.has(id)) {
-          scene.remove(mesh)
-          agentMeshes.delete(id)
-        }
+        if (!activeIds.has(id)) { scene.remove(mesh); agentMeshes.delete(id) }
       }
 
-      // Animate particles (snow/leaves) -- every 2nd frame
-      if (particleSystem && particlePositions && particleSpeeds && animId % 2 === 0) {
+      // Particles (every 4th rendered frame)
+      if (particleSystem && particlePositions && particleSpeeds && frameCount % 4 === 0) {
         for (let i = 0; i < particleCount; i++) {
-          const spd = particleSpeeds[i]
-          particlePositions[i * 3 + 1] -= spd * 0.02 // fall
+          particlePositions[i * 3 + 1] -= particleSpeeds[i] * 0.04
           if (season === "autumn") {
-            particlePositions[i * 3] += Math.sin(t * 2 + i) * 0.005 // drift
-            particlePositions[i * 3 + 2] += Math.cos(t * 1.5 + i * 0.7) * 0.003
+            particlePositions[i * 3] += Math.sin(t * 2 + i) * 0.01
+            particlePositions[i * 3 + 2] += Math.cos(t * 1.5 + i * 0.7) * 0.006
           } else {
-            particlePositions[i * 3] += Math.sin(t + i * 0.1) * 0.002 // gentle snow drift
+            particlePositions[i * 3] += Math.sin(t + i * 0.1) * 0.004
           }
-          // Reset to top when hitting ground
           if (particlePositions[i * 3 + 1] < 0) {
             particlePositions[i * 3 + 1] = 12 + Math.random() * 3
             particlePositions[i * 3] = (Math.random() - 0.5) * MAP
             particlePositions[i * 3 + 2] = (Math.random() - 0.5) * MAP
           }
         }
-        (particleSystem.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true
+        ;(particleSystem.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true
       }
 
       renderer.render(scene, camera)
     }
     animate()
 
-    // Store ref
-    sceneRef.current = {
-      renderer, scene, camera, animId, sunLight, ambLight, hemiLight, fog,
-      agentMeshes, carGroups: movingCarGroup, waterMeshes, nightLights,
-      clock, isDragging: false, lastMouse: { x: 0, y: 0 }, isRightDrag: false,
-      spherical: sph, target, orbitRadius
-    }
+    sceneRef.current = { renderer, scene, camera, animId }
 
     return () => {
       cancelAnimationFrame(animId)
@@ -1036,11 +924,24 @@ export function MapStage({ map, agents, phase, onAgentClick }: MapStageProps) {
       domEl.removeEventListener("pointerup", onPointerUp)
       domEl.removeEventListener("pointerleave", onPointerUp)
       domEl.removeEventListener("wheel", onWheel)
-  domEl.removeEventListener("contextmenu", onContextMenu)
-  domEl.removeEventListener("click", onClickForAgent)
-  domEl.removeEventListener("mousemove", onHoverCheck)
-  if (hoverTimeout) clearTimeout(hoverTimeout)
-  renderer.dispose()
+      domEl.removeEventListener("contextmenu", onContextMenu)
+      domEl.removeEventListener("click", onClickForAgent)
+      domEl.removeEventListener("mousemove", onHoverCheck)
+      if (hoverTimeout) clearTimeout(hoverTimeout)
+      // Dispose all geometries and materials
+      scene.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry?.dispose()
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose())
+          else obj.material?.dispose()
+        }
+        if (obj instanceof THREE.InstancedMesh) {
+          obj.geometry?.dispose()
+          if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose())
+          else obj.material?.dispose()
+        }
+      })
+      renderer.dispose()
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement)
     }
   }, [map])
