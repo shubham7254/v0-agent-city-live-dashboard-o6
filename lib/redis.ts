@@ -1,75 +1,100 @@
-import { Redis } from "@upstash/redis"
 import type { WorldState, Snapshot, WorldEvent, ChronicleEntry } from "./types"
 
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL!,
-  token: process.env.KV_REST_API_TOKEN!,
-})
+// ── In-Memory Store (replaces Redis) ──
+// This allows the simulation to run without an external Redis instance.
+// Data persists as long as the server process is running.
 
-export default redis
+const store: {
+  worldState: WorldState | null
+  snapshots: Snapshot[]
+  events: WorldEvent[]
+  chronicles: ChronicleEntry[]
+  spectators: Map<string, number> // viewerId -> lastSeen timestamp
+  vote: CommunityProposal | null
+  voteResults: { a: number; b: number }
+  voters: Set<string>
+  settings: Record<string, unknown>
+} = {
+  worldState: null,
+  snapshots: [],
+  events: [],
+  chronicles: [],
+  spectators: new Map(),
+  vote: null,
+  voteResults: { a: 0, b: 0 },
+  voters: new Set(),
+  settings: {},
+}
 
 // ── World State ──
 export async function getWorldState(): Promise<WorldState | null> {
-  return redis.get<WorldState>("world_state")
+  return store.worldState
 }
 
 export async function setWorldState(state: WorldState): Promise<void> {
-  await redis.set("world_state", state)
+  store.worldState = state
 }
 
 // ── Snapshots ──
 export async function pushSnapshot(snapshot: Snapshot): Promise<void> {
-  await redis.lpush("world_snapshots", snapshot)
-  await redis.ltrim("world_snapshots", 0, 199)
+  store.snapshots.unshift(snapshot)
+  if (store.snapshots.length > 200) {
+    store.snapshots = store.snapshots.slice(0, 200)
+  }
 }
 
 export async function getSnapshots(count = 50): Promise<Snapshot[]> {
-  return redis.lrange<Snapshot>("world_snapshots", 0, count - 1)
+  return store.snapshots.slice(0, count)
 }
 
 // ── Event Log ──
 export async function pushEvent(event: WorldEvent): Promise<void> {
-  await redis.lpush("event_log", event)
-  await redis.ltrim("event_log", 0, 1999)
+  store.events.unshift(event)
+  if (store.events.length > 2000) {
+    store.events = store.events.slice(0, 2000)
+  }
 }
 
 export async function getEvents(count = 50): Promise<WorldEvent[]> {
-  return redis.lrange<WorldEvent>("event_log", 0, count - 1)
+  return store.events.slice(0, count)
 }
 
 // ── Chronicle ──
 export async function pushChronicle(entry: ChronicleEntry): Promise<void> {
-  await redis.lpush("chronicles", entry)
-  await redis.ltrim("chronicles", 0, 99)
+  store.chronicles.unshift(entry)
+  if (store.chronicles.length > 100) {
+    store.chronicles = store.chronicles.slice(0, 100)
+  }
 }
 
 export async function getChronicles(count = 30): Promise<ChronicleEntry[]> {
-  return redis.lrange<ChronicleEntry>("chronicles", 0, count - 1)
+  return store.chronicles.slice(0, count)
 }
 
 // ── Spectator Count (heartbeat-based) ──
-const SPECTATOR_KEY = "spectators"
 const SPECTATOR_TTL = 45 // seconds before a viewer is considered gone
 
+function pruneStaleSpectators() {
+  const cutoff = Date.now() - SPECTATOR_TTL * 1000
+  for (const [id, lastSeen] of store.spectators) {
+    if (lastSeen < cutoff) {
+      store.spectators.delete(id)
+    }
+  }
+}
+
 export async function registerSpectator(viewerId: string): Promise<number> {
-  const now = Date.now()
-  await redis.zadd(SPECTATOR_KEY, { score: now, member: viewerId })
-  // Remove stale viewers (older than TTL)
-  await redis.zremrangebyscore(SPECTATOR_KEY, 0, now - SPECTATOR_TTL * 1000)
-  return redis.zcard(SPECTATOR_KEY)
+  store.spectators.set(viewerId, Date.now())
+  pruneStaleSpectators()
+  return store.spectators.size
 }
 
 export async function getSpectatorCount(): Promise<number> {
-  const now = Date.now()
-  await redis.zremrangebyscore(SPECTATOR_KEY, 0, now - SPECTATOR_TTL * 1000)
-  return redis.zcard(SPECTATOR_KEY)
+  pruneStaleSpectators()
+  return store.spectators.size
 }
 
 // ── Community Voting ──
-const VOTE_KEY = "community_vote"
-const VOTE_RESULTS_KEY = "community_vote_results"
-const VOTE_VOTERS_KEY = "community_vote_voters"
-
 export interface CommunityProposal {
   id: string
   title: string
@@ -85,45 +110,45 @@ export async function getCurrentVote(): Promise<{
   results: { a: number; b: number }
   totalVoters: number
 }> {
-  const proposal = await redis.get<CommunityProposal>(VOTE_KEY)
+  const proposal = store.vote
   if (!proposal || Date.now() > proposal.expiresAt) {
     return { proposal: null, results: { a: 0, b: 0 }, totalVoters: 0 }
   }
-  const results = await redis.get<{ a: number; b: number }>(VOTE_RESULTS_KEY) ?? { a: 0, b: 0 }
-  const totalVoters = await redis.scard(VOTE_VOTERS_KEY)
-  return { proposal, results, totalVoters }
+  return {
+    proposal,
+    results: { ...store.voteResults },
+    totalVoters: store.voters.size,
+  }
 }
 
-export async function castVote(viewerId: string, choice: "a" | "b"): Promise<{ success: boolean; results: { a: number; b: number } }> {
-  const proposal = await redis.get<CommunityProposal>(VOTE_KEY)
+export async function castVote(
+  viewerId: string,
+  choice: "a" | "b"
+): Promise<{ success: boolean; results: { a: number; b: number } }> {
+  const proposal = store.vote
   if (!proposal || Date.now() > proposal.expiresAt) {
     return { success: false, results: { a: 0, b: 0 } }
   }
-  const alreadyVoted = await redis.sismember(VOTE_VOTERS_KEY, viewerId)
-  if (alreadyVoted) {
-    const results = await redis.get<{ a: number; b: number }>(VOTE_RESULTS_KEY) ?? { a: 0, b: 0 }
-    return { success: false, results }
+  if (store.voters.has(viewerId)) {
+    return { success: false, results: { ...store.voteResults } }
   }
-  await redis.sadd(VOTE_VOTERS_KEY, viewerId)
-  const results = await redis.get<{ a: number; b: number }>(VOTE_RESULTS_KEY) ?? { a: 0, b: 0 }
-  if (choice === "a") results.a++
-  else results.b++
-  await redis.set(VOTE_RESULTS_KEY, results)
-  return { success: true, results }
+  store.voters.add(viewerId)
+  if (choice === "a") store.voteResults.a++
+  else store.voteResults.b++
+  return { success: true, results: { ...store.voteResults } }
 }
 
 export async function setNewVote(proposal: CommunityProposal): Promise<void> {
-  await redis.set(VOTE_KEY, proposal)
-  await redis.set(VOTE_RESULTS_KEY, { a: 0, b: 0 })
-  await redis.del(VOTE_VOTERS_KEY)
+  store.vote = proposal
+  store.voteResults = { a: 0, b: 0 }
+  store.voters.clear()
 }
 
 // ── Settings ──
 export async function getSettings(): Promise<Record<string, unknown>> {
-  const s = await redis.get<Record<string, unknown>>("settings")
-  return s ?? {}
+  return store.settings
 }
 
 export async function setSettings(settings: Record<string, unknown>): Promise<void> {
-  await redis.set("settings", settings)
+  store.settings = settings
 }
