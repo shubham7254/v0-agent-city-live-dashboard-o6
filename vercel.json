@@ -1,3 +1,4 @@
 {
-  "installCommand": "rm -rf node_modules && pnpm install --no-frozen-lockfile"
+  "installCommand": "rm -rf node_modules .pnpm-store && pnpm install --no-frozen-lockfile --ignore-scripts",
+  "framework": "nextjs"
 }
