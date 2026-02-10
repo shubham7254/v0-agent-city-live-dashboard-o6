@@ -2,6 +2,7 @@
   "name": "my-project",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.15.4",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -13,6 +14,8 @@
     "framer-motion": "^11.15.0",
     "swr": "^2.2.5",
     "three": "0.160.0",
+    "@react-three/fiber": "^9.5.0",
+    "@react-three/drei": "^10.7.7",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -64,6 +67,20 @@
     "zod": "^3.24.1"
   },
 
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "expo",
+        "expo-asset",
+        "expo-file-system",
+        "expo-gl",
+        "react-native"
+      ],
+      "allowAny": [
+        "three"
+      ]
+    }
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",
     "@types/three": "0.160.0",
