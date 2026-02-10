@@ -4,7 +4,7 @@ import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { X, Shield, Swords, Heart } from "lucide-react"
 import type { Agent } from "@/lib/types"
-import { ScrollArea } from "@/components/ui/scroll-area"
+import { ScrollArea } from "@/components/ui/scroll-area" // force HMR reload
 
 interface AgentRailProps {
   agents: Agent[]
