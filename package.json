@@ -67,6 +67,20 @@
     "zod": "^3.24.1"
   },
 
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "expo",
+        "expo-asset",
+        "expo-file-system",
+        "expo-gl",
+        "react-native"
+      ],
+      "allowAny": [
+        "three"
+      ]
+    }
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.13",
     "@types/three": "0.160.0",
