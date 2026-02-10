@@ -36,12 +36,22 @@ export interface Position {
   y: number
 }
 
+export interface ConstructionSite {
+  buildingType: BuildingType
+  progress: number       // 0-100
+  startedDay: number
+  assignedBuilder?: string  // agent id
+  proposalId?: string       // council proposal that triggered it
+}
+
 export interface MapTile {
   biome: Biome
   building?: BuildingType
+  construction?: ConstructionSite  // active construction on this tile
   hasPath?: boolean
   floodRisk: number
   fireRisk: number
+  builtOnDay?: number              // day when building was completed
 }
 
 export interface AgentPersonality {
@@ -160,6 +170,24 @@ export interface WorldMetrics {
   fireStability: number
 }
 
+export interface PlannedConstruction {
+  id: string
+  buildingType: BuildingType
+  targetPosition: Position
+  proposalId?: string
+  proposalTitle?: string
+  queuedOnDay: number
+  priority: number  // higher = sooner
+}
+
+export interface CompletedProject {
+  buildingType: BuildingType
+  position: Position
+  completedOnDay: number
+  builtBy?: string  // agent name
+  proposalTitle?: string
+}
+
 export interface WorldState {
   day: number
   hour: number
@@ -181,6 +209,8 @@ export interface WorldState {
   councilActive: boolean
   councilAnnouncement: string | null
   lastProcessedHour: number
+  constructionQueue: PlannedConstruction[]
+  completedProjects: CompletedProject[]
 }
 
 export interface Snapshot {

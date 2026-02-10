@@ -1,9 +1,11 @@
 import type {
   Agent,
+  BuildingType,
   ChronicleEntry,
   CouncilDialogue,
   NewsItem,
   Phase,
+  Position,
   Proposal,
   StoryEvent,
   WorldEvent,
@@ -520,7 +522,9 @@ function runHourlyEvents(state: WorldState): { events: WorldEvent[]; news: NewsI
             ;(state.metrics as Record<string, number>)[key] = clamp(current + delta, 0, 200)
           }
         }
-        news.push({ id: `news-${uid()}`, headline: `Council approves: ${proposal.title}`, body: `Passed ${yesCount}-${noCount}.`, category: "breaking", severity: "medium", day: state.day, timestamp: Date.now() })
+        // Queue real construction from approved proposal
+        queueConstructionFromProposal(state, proposal)
+        news.push({ id: `news-${uid()}`, headline: `Council approves: ${proposal.title}`, body: `Passed ${yesCount}-${noCount}. Construction begins soon.`, category: "breaking", severity: "medium", day: state.day, timestamp: Date.now() })
       }
       dialogue.push({ agentId: chair.id, message: `"${proposal.title}" result: ${proposal.status.toUpperCase()} (${yesCount}-${noCount}).`, timestamp: Date.now(), type: "opinion", referencedProposal: proposal.id })
     }
@@ -593,6 +597,314 @@ function runHourlyEvents(state: WorldState): { events: WorldEvent[]; news: NewsI
   return { events, news, chronicle }
 }
 
+// ── Proposal → Building type mapping ──
+const PROPOSAL_TO_BUILDING: Record<string, BuildingType> = {
+  "Build a watchtower on the hill": "watchtower",
+  "Expand the southern farm": "farm",
+  "Dig a new well near the river": "well",
+  "Reinforce the northern wall": "wall",
+  "Build a storehouse for winter": "storehouse",
+  "Build a fishing dock": "farm",
+  "Expand the hospital ward": "hospital",
+  "Build a new residential block": "house",
+  "Open a public library": "school",
+  "Pave the main roads with stone": "road",
+  "Build a playground for children": "market",
+  "Establish a town bakery co-op": "shop",
+  "Create a town square market": "market",
+  "Build a sewage system": "well",
+  "Establish a fire brigade": "watchtower",
+  "Establish a medical herb garden": "farm",
+  "Hire more teachers for the school": "school",
+  "Train a night watch militia": "wall",
+  "Scout the eastern mountains": "watchtower",
+}
+
+// ── Find valid empty tile for new construction ──
+function findBuildSite(state: WorldState, preferNear?: Position): Position | null {
+  const map = state.map
+  const size = map.length
+  const cx = preferNear?.x ?? 30
+  const cy = preferNear?.y ?? 30
+  let best: Position | null = null
+  let bestDist = Infinity
+
+  for (let dy = -8; dy <= 8; dy++) {
+    for (let dx = -8; dx <= 8; dx++) {
+      const x = cx + dx
+      const y = cy + dy
+      if (x < 22 || x > 38 || y < 22 || y > 38) continue
+      if (!map[y]?.[x]) continue
+      const tile = map[y][x]
+      if (tile.building || tile.construction) continue
+      if (tile.biome === "water" || tile.biome === "mountain") continue
+      // Prefer tiles near roads
+      const nearRoad = (map[y - 1]?.[x]?.hasPath || map[y + 1]?.[x]?.hasPath || map[y]?.[x - 1]?.hasPath || map[y]?.[x + 1]?.hasPath)
+      const dist = Math.abs(dx) + Math.abs(dy) - (nearRoad ? 3 : 0)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = { x, y }
+      }
+    }
+  }
+  return best
+}
+
+// ── Queue construction from an approved proposal ──
+function queueConstructionFromProposal(state: WorldState, proposal: { id: string; title: string }): void {
+  const buildingType = PROPOSAL_TO_BUILDING[proposal.title]
+  if (!buildingType) return
+
+  // Find builder to assign
+  const builders = state.agents.filter((a) =>
+    ["Builder", "Mason", "Carpenter", "Blacksmith"].includes(a.archetype) && a.status !== "sleeping"
+  )
+  const builder = builders.length > 0 ? randomPick(builders) : null
+  const site = findBuildSite(state, builder?.workPosition)
+  if (!site) return
+
+  if (!state.constructionQueue) state.constructionQueue = []
+  state.constructionQueue.push({
+    id: `build-${uid()}`,
+    buildingType,
+    targetPosition: site,
+    proposalId: proposal.id,
+    proposalTitle: proposal.title,
+    queuedOnDay: state.day,
+    priority: 1,
+  })
+
+  // Place construction site on map
+  const tile = state.map[site.y]?.[site.x]
+  if (tile) {
+    tile.construction = {
+      buildingType,
+      progress: 0,
+      startedDay: state.day,
+      assignedBuilder: builder?.id,
+      proposalId: proposal.id,
+    }
+  }
+}
+
+// ── Advance all active construction sites ──
+function advanceConstruction(state: WorldState): WorldEvent[] {
+  const events: WorldEvent[] = []
+  if (!state.constructionQueue) state.constructionQueue = []
+  if (!state.completedProjects) state.completedProjects = []
+
+  for (let y = 0; y < state.map.length; y++) {
+    for (let x = 0; x < state.map[y].length; x++) {
+      const tile = state.map[y][x]
+      if (!tile.construction) continue
+
+      const site = tile.construction
+      // Find assigned builder or any available builder
+      let builder = site.assignedBuilder
+        ? state.agents.find((a) => a.id === site.assignedBuilder && a.status !== "sleeping")
+        : null
+      if (!builder) {
+        builder = state.agents.find((a) =>
+          ["Builder", "Mason", "Carpenter"].includes(a.archetype) &&
+          a.status !== "sleeping" && a.status !== "in_council"
+        ) ?? null
+      }
+
+      // Progress depends on: builder available, weather, time of day
+      let progressInc = 0
+      if (builder) {
+        progressInc = 8 + Math.floor(Math.random() * 7) // 8-14 per tick with builder
+        if (state.weather === "storm") progressInc = Math.floor(progressInc * 0.3)
+        else if (state.weather === "rain") progressInc = Math.floor(progressInc * 0.6)
+        if (state.phase === "night") progressInc = Math.floor(progressInc * 0.2)
+
+        // Move builder toward construction site
+        builder.position = { x, y }
+        builder.status = "working"
+        site.assignedBuilder = builder.id
+      } else {
+        progressInc = 2 // Slow progress without dedicated builder
+      }
+
+      site.progress = Math.min(100, site.progress + progressInc)
+
+      // Generate construction events at milestones
+      if (site.progress >= 25 && site.progress - progressInc < 25) {
+        events.push({
+          id: `evt-${uid()}`, type: "construction_progress",
+          description: `Foundation laid for new ${site.buildingType}${builder ? ` by ${builder.name}` : ""} at (${x},${y}).`,
+          severity: "low", position: { x, y }, day: state.day, phase: state.phase, timestamp: Date.now(),
+          involvedAgents: builder ? [builder.id] : [],
+        })
+      }
+      if (site.progress >= 50 && site.progress - progressInc < 50) {
+        events.push({
+          id: `evt-${uid()}`, type: "construction_progress",
+          description: `Walls going up on the new ${site.buildingType}. Construction is halfway done.`,
+          severity: "low", position: { x, y }, day: state.day, phase: state.phase, timestamp: Date.now(),
+          involvedAgents: builder ? [builder.id] : [],
+        })
+      }
+      if (site.progress >= 75 && site.progress - progressInc < 75) {
+        events.push({
+          id: `evt-${uid()}`, type: "construction_progress",
+          description: `The new ${site.buildingType} is taking shape. Roof is being added.`,
+          severity: "low", position: { x, y }, day: state.day, phase: state.phase, timestamp: Date.now(),
+          involvedAgents: builder ? [builder.id] : [],
+        })
+      }
+
+      // Complete construction
+      if (site.progress >= 100) {
+        tile.building = site.buildingType
+        tile.builtOnDay = state.day
+        const builderAgent = builder ?? (site.assignedBuilder ? state.agents.find((a) => a.id === site.assignedBuilder) : null)
+
+        state.completedProjects.push({
+          buildingType: site.buildingType,
+          position: { x, y },
+          completedOnDay: state.day,
+          builtBy: builderAgent?.name,
+          proposalTitle: state.constructionQueue.find((c) => c.proposalId === site.proposalId)?.proposalTitle,
+        })
+
+        events.push({
+          id: `evt-${uid()}`, type: "construction_complete",
+          description: `New ${site.buildingType} completed${builderAgent ? ` by ${builderAgent.name}` : ""}! The settlement grows.`,
+          severity: "medium", position: { x, y }, day: state.day, phase: state.phase, timestamp: Date.now(),
+          involvedAgents: builderAgent ? [builderAgent.id] : [],
+        })
+
+        // Boost morale on completion
+        state.metrics.morale = clamp(state.metrics.morale + 3, 0, 100)
+        if (builderAgent) {
+          builderAgent.reputation = clamp(builderAgent.reputation + 5, 0, 100)
+        }
+
+        // Remove from queue
+        state.constructionQueue = state.constructionQueue.filter((c) => c.proposalId !== site.proposalId)
+        delete tile.construction
+      }
+    }
+  }
+
+  return events
+}
+
+// ── Spontaneous builder activity (not from proposals) ──
+function trySpontaneousConstruction(state: WorldState): WorldEvent[] {
+  const events: WorldEvent[] = []
+  if (!state.constructionQueue) state.constructionQueue = []
+
+  // Only during daytime, and only if builders are free
+  if (state.phase === "night") return events
+  
+  // Count active construction sites
+  let activeSites = 0
+  for (const row of state.map) {
+    for (const tile of row) {
+      if (tile.construction) activeSites++
+    }
+  }
+  if (activeSites >= 3) return events // max 3 concurrent constructions
+
+  // Builders sometimes start projects on their own
+  if (Math.random() > 0.06) return events
+
+  const freeBuilders = state.agents.filter((a) =>
+    ["Builder", "Mason", "Carpenter"].includes(a.archetype) &&
+    a.status === "working" &&
+    !state.map.some((row) => row.some((t) => t.construction?.assignedBuilder === a.id))
+  )
+  if (freeBuilders.length === 0) return events
+
+  const builder = randomPick(freeBuilders)
+  
+  // Decide what to build based on needs
+  let buildType: BuildingType
+  if (state.metrics.foodDays < 30) buildType = "farm"
+  else if (state.metrics.morale < 50) buildType = randomPick(["inn", "market", "shop"])
+  else if (state.metrics.population > 40 && Math.random() < 0.4) buildType = "house"
+  else if (state.metrics.healthRisk > 30) buildType = "hospital"
+  else buildType = randomPick(["house", "shop", "workshop", "storehouse", "well"])
+
+  const site = findBuildSite(state, builder.workPosition)
+  if (!site) return events
+
+  const tile = state.map[site.y]?.[site.x]
+  if (!tile) return events
+
+  tile.construction = {
+    buildingType: buildType,
+    progress: 0,
+    startedDay: state.day,
+    assignedBuilder: builder.id,
+  }
+
+  state.constructionQueue.push({
+    id: `build-${uid()}`,
+    buildingType: buildType,
+    targetPosition: site,
+    queuedOnDay: state.day,
+    priority: 0,
+  })
+
+  events.push({
+    id: `evt-${uid()}`, type: "construction_started",
+    description: `${builder.name} begins building a new ${buildType} at (${site.x},${site.y}). "${randomPick([
+      "This town needs more infrastructure.",
+      "I see an opportunity here.",
+      "The settlement is growing. Time to build.",
+      "We need this. I'm starting today.",
+      "Give me materials and time, and watch this rise.",
+    ])}"`,
+    severity: "low", position: site, day: state.day, phase: state.phase, timestamp: Date.now(),
+    involvedAgents: [builder.id],
+  })
+
+  return events
+}
+
+// ── Road expansion by builders ──
+function tryRoadExpansion(state: WorldState): WorldEvent[] {
+  const events: WorldEvent[] = []
+  if (state.phase === "night" || Math.random() > 0.04) return events
+
+  const masons = state.agents.filter((a) =>
+    ["Mason", "Builder"].includes(a.archetype) && a.status !== "sleeping"
+  )
+  if (masons.length === 0) return events
+
+  // Find a tile adjacent to existing road that could use a path
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const x = 24 + Math.floor(Math.random() * 14)
+    const y = 24 + Math.floor(Math.random() * 14)
+    const tile = state.map[y]?.[x]
+    if (!tile || tile.hasPath || tile.biome === "water") continue
+    if (tile.building && tile.building !== "road") continue
+
+    const hasAdjacentRoad = (
+      state.map[y - 1]?.[x]?.hasPath ||
+      state.map[y + 1]?.[x]?.hasPath ||
+      state.map[y]?.[x - 1]?.hasPath ||
+      state.map[y]?.[x + 1]?.hasPath
+    )
+    if (!hasAdjacentRoad) continue
+
+    tile.hasPath = true
+    const mason = randomPick(masons)
+    events.push({
+      id: `evt-${uid()}`, type: "road_built",
+      description: `${mason.name} extends the road network near (${x},${y}). The town becomes more connected.`,
+      severity: "low", position: { x, y }, day: state.day, phase: state.phase, timestamp: Date.now(),
+      involvedAgents: [mason.id],
+    })
+    break
+  }
+
+  return events
+}
+
 // ── Main Tick ──
 
 export interface TickResult {
@@ -658,8 +970,21 @@ export function executeTick(state: WorldState): TickResult {
     s.lastProcessedHour = s.hour
   }
 
+  // Initialize construction fields if missing (for old states loaded from Redis)
+  if (!s.constructionQueue) s.constructionQueue = []
+  if (!s.completedProjects) s.completedProjects = []
+
+  // Advance active construction sites
+  const constructionEvents = advanceConstruction(s)
+
+  // Spontaneous builder construction
+  const spontaneousEvents = trySpontaneousConstruction(s)
+
+  // Road expansion
+  const roadEvents = tryRoadExpansion(s)
+
   // Generate time-appropriate events every tick
-  const tickEvents = generateTimeAppropriateEvents(s)
+  const tickEvents = [...generateTimeAppropriateEvents(s), ...constructionEvents, ...spontaneousEvents, ...roadEvents]
 
   // Run story engine for narrative events (relationships, romance, business, etc.)
   const stories = runStoryEngine(s)
